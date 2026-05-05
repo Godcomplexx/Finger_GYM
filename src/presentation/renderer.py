@@ -65,6 +65,16 @@ GESTURE_LABELS = {
 
 # ── Вспомогательные функции ───────────────────────────────────────────────────
 
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (0, 9), (9, 10), (10, 11), (11, 12),
+    (0, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17),
+]
+
+
 def _bgr_to_pil(bgr: np.ndarray) -> Image.Image:
     return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
@@ -140,7 +150,74 @@ class Renderer:
 
     # ── Экран выбора руки ─────────────────────────────────────────────────────
 
-    def draw_hand_select(self, frame_bgr: np.ndarray) -> np.ndarray:
+    def draw_tracker_select(self, frame_bgr: np.ndarray, hover_key: str | None = None) -> np.ndarray:
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "Выбор источника трекинга")
+
+        cw, ch = 760, 360
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.90)
+
+        pil = _bgr_to_pil(img)
+        d = ImageDraw.Draw(pil)
+
+        _put(d, "Выберите трекер", (cx + 28, cy + 24), _F_XL_B, _WHITE)
+        _put(d, "1", (cx + 44, cy + 94), _F_XXL, _GREEN)
+        _put(d, "MediaPipe + веб-камера", (cx + 116, cy + 104), _F_LG_B, _GREEN)
+        _put(d, "Быстрый режим без отдельного оборудования", (cx + 116, cy + 142), _F_SM, _GRAY)
+
+        _put(d, "2", (cx + 44, cy + 196), _F_XXL, _ACCENT)
+        _put(d, "Ultraleap LeapC", (cx + 116, cy + 206), _F_LG_B, _ACCENT)
+        _put(d, "3D-трекинг кисти через датчик Ultraleap", (cx + 116, cy + 244), _F_SM, _GRAY)
+
+        _put(d, "Нажмите 1/M или 2/U, либо кликните мышью. Q или Esc - выход.", (cx + 28, cy + 310), _F_SM, _GRAY)
+
+        img[:] = _pil_to_bgr(pil)
+
+        buttons = {
+            "mediapipe": (cx + 28, cy + 88, cx + cw - 28, cy + 174),
+            "ultraleap": (cx + 28, cy + 190, cx + cw - 28, cy + 276),
+        }
+        for key, rect in buttons.items():
+            color = _GREEN_BGR if key == "mediapipe" else _ACCENT_BGR
+            border = color if key == hover_key else _BORDER_BGR
+            thickness = 3 if key == hover_key else 1
+            cv2.rectangle(img, rect[:2], rect[2:], border, thickness, cv2.LINE_AA)
+        return img
+
+    def draw_error_message(self, frame_bgr: np.ndarray, title: str, message: str) -> np.ndarray:
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "Сообщение")
+
+        cw, ch = 760, 300
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.92)
+
+        pil = _bgr_to_pil(img)
+        d = ImageDraw.Draw(pil)
+        _put(d, title, (cx + 28, cy + 24), _F_LG_B, _RED)
+
+        y = cy + 82
+        for line in message.splitlines():
+            _put(d, line, (cx + 28, y), _F_SM, _WHITE)
+            y += 28
+
+        _put(d, "Нажмите любую клавишу, чтобы вернуться к выбору.", (cx + 28, cy + 244), _F_SM, _GRAY)
+
+        img[:] = _pil_to_bgr(pil)
+        return img
+
+    def draw_hand_select(
+        self,
+        frame_bgr: np.ndarray,
+        hover_key=None,
+        dwell_ratio: float = 0.0,
+        pointer: tuple[int, int] | None = None,
+    ) -> np.ndarray:
         img = self._base(frame_bgr)
         W, H = self.w, self.h
         self._draw_header(img, "Модуль тестирования мелкой моторики кисти")
@@ -169,11 +246,28 @@ class Renderer:
         _put(d, "L", (cx + cw // 2 + 30, btn_y), _F_XXL, _GREEN)
         _put(d, "Левая рука", (cx + cw // 2 + 94, btn_y + 12), _F_LG, _GREEN)
 
-        _put(d, "Поместите руку перед камерой и нажмите R или L",
+        _put(d, "Нажмите R/L, кликните мышью или наведите палец и подержите",
              (cx + 24, cy + 216), _F_SM, _GRAY)
         _put(d, "Q — выход", (cx + 24, cy + 248), _F_SM, _GRAY)
 
         img[:] = _pil_to_bgr(pil)
+
+        buttons = {
+            "right": (cx + 28, cy + 78, cx + cw // 2 - 18, cy + 178),
+            "left": (cx + cw // 2 + 18, cy + 78, cx + cw - 28, cy + 178),
+        }
+        hover_value = getattr(hover_key, "value", hover_key)
+        for key, rect in buttons.items():
+            border = _GREEN_BGR if key == hover_value else _BORDER_BGR
+            thickness = 3 if key == hover_value else 1
+            cv2.rectangle(img, rect[:2], rect[2:], border, thickness, cv2.LINE_AA)
+            if key == hover_value and dwell_ratio > 0:
+                x1, y1, x2, _ = rect
+                _progress_bar(img, x1 + 12, y1 + 76, x2 - x1 - 24, 10, dwell_ratio, _GREEN_BGR)
+
+        if pointer is not None:
+            cv2.circle(img, pointer, 13, _ACCENT_BGR, 2, cv2.LINE_AA)
+            cv2.circle(img, pointer, 4, _WHITE_BGR, -1, cv2.LINE_AA)
         return img
 
     # ── Экран калибровки ──────────────────────────────────────────────────────
@@ -499,10 +593,10 @@ class Renderer:
         _put(d, "/ 100",
              (ring_cx - 20, ring_cy + 18), _F_SM, _GRAY)
 
-        # Рекомендация
-        _put(d, "Рекомендация:",
+        # Итоговый балл (текст рядом с кольцом)
+        _put(d, "Итого",
              (px + 164, py + 62), _F_SM, _GRAY)
-        _put(d, summary.recommendation.label,
+        _put(d, f"{score} / 100",
              (px + 164, py + 88), _F_LG_B, score_c)
 
         # Блочные баллы — 2 колонки
@@ -551,12 +645,6 @@ class Renderer:
         pil3 = _bgr_to_pil(img)
         d3   = ImageDraw.Draw(pil3)
 
-        # Рекомендационные заметки (1 строка)
-        if summary.recommendation.notes:
-            _put(d3, f"• {summary.recommendation.notes[0]}",
-                 (px + 24, note_y), _F_SM, _GRAY)
-            note_y += 22
-
         # Краткая строка по каждому упражнению
         ex_results = summary.exercise_results
         cols = 2
@@ -584,12 +672,30 @@ class Renderer:
 
     def draw_tracking_overlay(self, img: np.ndarray,
                               tracking: TrackingFrame) -> np.ndarray:
-        from src.tracking.adapter import HAND_CONNECTIONS
         if not tracking.is_valid or not tracking.landmarks:
+            status = "Tracking: no hand"
+            color = _RED_BGR
+            if tracking.source == "ultraleap":
+                status = "Ultraleap: place hand above sensor"
+            cv2.rectangle(img, (18, self.h - 46), (390, self.h - 14), _PANEL_BGR, -1)
+            cv2.rectangle(img, (18, self.h - 46), (390, self.h - 14), _BORDER_BGR, 1)
+            cv2.circle(img, (36, self.h - 30), 7, color, -1, cv2.LINE_AA)
+            cv2.putText(
+                img,
+                status,
+                (52, self.h - 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                _WHITE_BGR,
+                1,
+                cv2.LINE_AA,
+            )
             return img
         h, w = img.shape[:2]
-        pts  = [(int(p.x * w), int(p.y * h)) for p in tracking.landmarks]
+        pts = [(int(p.x * w), int(p.y * h)) for p in tracking.landmarks]
         for a, b in HAND_CONNECTIONS:
+            if a >= len(pts) or b >= len(pts):
+                continue
             cv2.line(img, pts[a], pts[b], (80, 220, 80), 1, cv2.LINE_AA)
         for idx, p in enumerate(pts):
             r = 5 if idx == 0 else 3

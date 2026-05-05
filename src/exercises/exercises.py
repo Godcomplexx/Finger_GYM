@@ -84,8 +84,8 @@ class PointGestureExercise(BaseExercise):
         curls = all_finger_curls(frame, pw)   # [index, middle, ring, pinky]
         index_curl = curls[0]
         others_bent = sum(1 for c in curls[1:] if c > 0.45)
-        # Указательный разогнут (< 0.45), минимум 2 из 3 остальных согнуты
-        return index_curl < 0.45 and others_bent >= 2
+        # Указательный разогнут (< 0.45), хотя бы 1 из 3 остальных согнут
+        return index_curl < 0.45 and others_bent >= 1
 
 
 # ── 5. Ладонь к камере ────────────────────────────────────────────────────────

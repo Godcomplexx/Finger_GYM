@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from dataclasses import asdict
 from src.models import TestSession, Hand
+from src.app_info import MODULE_NAME
 
 
 SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "sessions")
@@ -34,6 +35,14 @@ def save_session(session: TestSession) -> str:
     calib = session.calibration
 
     payload = {
+        "module": {
+            "name": MODULE_NAME,
+            "version": session.module_version,
+            "algorithmVersion": session.algorithm_version,
+            "modelName": session.model_name,
+            "modelSha256": session.model_sha256,
+            "trackingSource": session.tracking_source,
+        },
         "sessionId": session.session_id,
         "patientId": session.patient_id,
         "hand": session.hand.value,
@@ -70,11 +79,30 @@ def save_session(session: TestSession) -> str:
             "holdStability": summary.block_scores.hold_stability,
         } if summary else None,
         "totalScore": summary.total_score if summary else None,
+        "qualityCategory": summary.quality_category.value if summary else None,
+        "requiresSpecialistConfirmation": summary is not None,
+        "technicalValidity": {
+            "isInterpretable": bool(summary and summary.valid_tracking_ratio >= 0.65),
+            "reason": (
+                None if summary and summary.valid_tracking_ratio >= 0.65
+                else "tracking_quality_below_threshold_or_no_summary"
+            ),
+        },
         "recommendation": {
             "mode": summary.recommendation.mode.value,
             "label": summary.recommendation.label,
             "notes": summary.recommendation.notes,
         } if summary else None,
+        "events": [
+            {
+                "timestamp": datetime.fromtimestamp(e.timestamp, tz=timezone.utc).isoformat(),
+                "type": e.event_type,
+                "severity": e.severity.value,
+                "message": e.message,
+                "details": e.details,
+            }
+            for e in session.events
+        ],
     }
 
     with open(filepath, "w", encoding="utf-8") as f:

@@ -25,6 +25,19 @@ class RecommendationMode(str, Enum):
     INDIVIDUAL = "individual"
 
 
+class QualityCategory(str, Enum):
+    GOOD = "good"
+    MEDIUM = "medium"
+    POOR = "poor"
+    UNRELIABLE = "unreliable"
+
+
+class EventSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 @dataclass
 class Point2D:
     x: float  # нормировано [0,1] относительно ширины кадра
@@ -41,6 +54,10 @@ class TrackingFrame:
     landmarks: list[Point2D]            # 21 точка MediaPipe
     is_valid: bool                      # рука распознана корректно
     hand_label: str = "Unknown"         # "Left" / "Right" от MediaPipe
+    source: str = "unknown"
+    coordinate_system: str = "image_normalized"
+    confidence: float | None = None
+    framerate: float | None = None
 
 
 @dataclass
@@ -91,10 +108,20 @@ class Recommendation:
 
 
 @dataclass
+class AuditEvent:
+    event_type: str
+    severity: EventSeverity
+    message: str
+    timestamp: float = field(default_factory=time.time)
+    details: dict = field(default_factory=dict)
+
+
+@dataclass
 class TestSummary:
     valid_tracking_ratio: float
     block_scores: BlockScores
     total_score: int
+    quality_category: QualityCategory
     recommendation: Recommendation
     exercise_results: list[ExerciseResult] = field(default_factory=list)
 
@@ -105,5 +132,11 @@ class TestSession:
     patient_id: str
     hand: Hand
     started_at: float = field(default_factory=time.time)
+    module_version: str = "unknown"
+    algorithm_version: str = "unknown"
+    model_name: str = "unknown"
+    model_sha256: str | None = None
+    tracking_source: str = "unknown"
     calibration: Optional[CalibrationProfile] = None
     summary: Optional[TestSummary] = None
+    events: list[AuditEvent] = field(default_factory=list)

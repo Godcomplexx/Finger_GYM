@@ -1,9 +1,9 @@
 """Тесты модуля src/scoring/engine.py"""
 import pytest
-from src.models import ExerciseResult, ExerciseStatus, RecommendationMode
+from src.models import ExerciseResult, ExerciseStatus, QualityCategory, RecommendationMode
 from src.scoring.engine import (
     compute_block_scores, compute_valid_tracking_ratio,
-    make_recommendation, build_summary,
+    make_quality_category, make_recommendation, build_summary,
 )
 
 
@@ -140,10 +140,25 @@ class TestMakeRecommendation:
 
 # ── Тесты build_summary ───────────────────────────────────────────────────────
 
+class TestMakeQualityCategory:
+    def test_unreliable_tracking(self):
+        assert make_quality_category(100, 0.64) == QualityCategory.UNRELIABLE
+
+    def test_good(self):
+        assert make_quality_category(75, 0.90) == QualityCategory.GOOD
+
+    def test_medium(self):
+        assert make_quality_category(50, 0.90) == QualityCategory.MEDIUM
+
+    def test_poor(self):
+        assert make_quality_category(49, 0.90) == QualityCategory.POOR
+
+
 class TestBuildSummary:
     def test_full_perfect_summary(self):
         s = build_summary(_full_results(vtr=1.0))
         assert s.total_score == 100
+        assert s.quality_category == QualityCategory.GOOD
         assert s.recommendation.mode == RecommendationMode.STANDARD
 
     def test_zero_tracking_unreliable(self):
@@ -154,6 +169,7 @@ class TestBuildSummary:
                        ("back_facing", 10), ("zone_movement", 15), ("hold_still", 5)
                    ]]
         s = build_summary(results)
+        assert s.quality_category == QualityCategory.UNRELIABLE
         assert s.recommendation.mode == RecommendationMode.REPEAT
 
     def test_exercise_results_preserved(self):

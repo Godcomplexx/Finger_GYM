@@ -10,6 +10,7 @@ from mediapipe.tasks.python.vision import (
 )
 
 from src.models import TrackingFrame, Point2D
+from src.app_info import tracking_model_sha256
 
 # Путь к модели относительно корня проекта
 _HERE = os.path.dirname(__file__)
@@ -35,6 +36,10 @@ HAND_CONNECTIONS = [
 
 
 class TrackingAdapter:
+    source_name = "mediapipe"
+    model_name = "MediaPipe Hand Landmarker"
+    requires_video = True
+
     """Обёртка над MediaPipe HandLandmarker (Tasks API >= 0.10)."""
 
     def __init__(self, model_path: str = MODEL_PATH,
@@ -55,9 +60,19 @@ class TrackingAdapter:
             min_tracking_confidence=min_tracking_confidence,
         )
         self._landmarker = HandLandmarker.create_from_options(options)
+        self.model_path = os.path.abspath(model_path)
+        self.model_sha256 = tracking_model_sha256()
         self._frame_ts_ms: int = 0   # монотонная временная метка в мс
 
-    def process(self, bgr_frame: np.ndarray) -> TrackingFrame:
+    def process(self, bgr_frame: np.ndarray | None = None) -> TrackingFrame:
+        if bgr_frame is None:
+            return TrackingFrame(
+                timestamp=time.monotonic(),
+                landmarks=[],
+                is_valid=False,
+                source=self.source_name,
+            )
+
         rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
@@ -67,7 +82,12 @@ class TrackingAdapter:
         ts = time.monotonic()
 
         if not result.hand_landmarks:
-            return TrackingFrame(timestamp=ts, landmarks=[], is_valid=False)
+            return TrackingFrame(
+                timestamp=ts,
+                landmarks=[],
+                is_valid=False,
+                source=self.source_name,
+            )
 
         lms = result.hand_landmarks[0]
         label = "Unknown"
@@ -81,6 +101,8 @@ class TrackingAdapter:
             landmarks=landmarks,
             is_valid=True,
             hand_label=label,
+            source=self.source_name,
+            coordinate_system="image_normalized",
         )
 
     def draw_landmarks(self, bgr_frame: np.ndarray,

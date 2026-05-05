@@ -1,7 +1,7 @@
 from __future__ import annotations
 from src.models import (
     ExerciseResult, ExerciseStatus, BlockScores,
-    Recommendation, RecommendationMode, TestSummary,
+    QualityCategory, Recommendation, RecommendationMode, TestSummary,
 )
 from src.processing.metrics import valid_tracking_ratio
 
@@ -16,6 +16,16 @@ MAX_ZONE_MOVEMENT = 15
 MAX_HOLD_STABILITY = 5
 
 UNRELIABLE_THRESHOLD = 0.65
+
+
+def make_quality_category(total_score: int, avg_vtr: float) -> QualityCategory:
+    if avg_vtr < UNRELIABLE_THRESHOLD:
+        return QualityCategory.UNRELIABLE
+    if total_score >= 75:
+        return QualityCategory.GOOD
+    if total_score >= 50:
+        return QualityCategory.MEDIUM
+    return QualityCategory.POOR
 
 
 def _tracking_quality_score(results: list[ExerciseResult]) -> int:
@@ -116,11 +126,13 @@ def build_summary(results: list[ExerciseResult]) -> TestSummary:
     block_scores = compute_block_scores(results)
     total = block_scores.total()
     avg_vtr = compute_valid_tracking_ratio(results)
+    quality_category = make_quality_category(total, avg_vtr)
     recommendation = make_recommendation(total, avg_vtr)
     return TestSummary(
         valid_tracking_ratio=round(avg_vtr, 3),
         block_scores=block_scores,
         total_score=total,
+        quality_category=quality_category,
         recommendation=recommendation,
         exercise_results=results,
     )

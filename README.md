@@ -48,6 +48,28 @@ pip install -r requirements.txt
 python main.py
 ```
 
+При обычном запуске сначала открывается экран выбора трекера: `1/M` или клик мышью - MediaPipe, `2/U` или клик мышью - Ultraleap.
+
+Режимы трекинга:
+
+```bash
+python main.py --tracker mediapipe
+python main.py --tracker ultraleap
+```
+
+`mediapipe` использует веб-камеру и модель `hand_landmarker.task`. `ultraleap` использует Ultraleap Hand Tracking Software и подключается напрямую к `LeapC.dll`, поэтому перед запуском должны быть установлены SDK/сервис Ultraleap.
+
+В режиме Ultraleap обычного видео с камеры нет: приложение показывает виртуальную рабочую зону и рисует скелет руки по координатам датчика.
+
+Для Ultraleap можно настроить рабочую область нормализации координат:
+
+```bash
+set ULTRALEAP_WORKSPACE_WIDTH_MM=300
+set ULTRALEAP_WORKSPACE_HEIGHT_MM=300
+set ULTRALEAP_WORKSPACE_CENTER_Y_MM=200
+python main.py --tracker ultraleap
+```
+
 Дополнительные параметры:
 
 ```bash
@@ -58,6 +80,7 @@ python main.py --camera 0 --patient patient-001 --width 1280 --height 720
 
 - `R` - выбрать правую руку;
 - `L` - выбрать левую руку;
+- на экране выбора руки можно кликнуть мышью по кнопке или навести указательный палец на кнопку и подержать;
 - `Q` или `Esc` - выйти.
 
 ## Тесты
@@ -65,6 +88,10 @@ python main.py --camera 0 --patient patient-001 --width 1280 --height 720
 ```bash
 pytest
 ```
+
+## Документация 3.X
+
+Проектные документы для ТЗ, интеграции, ПДн, испытаний, датасетов и рисков находятся в папке `docs/`.
 
 ## Данные
 

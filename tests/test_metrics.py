@@ -236,21 +236,23 @@ class TestPalmFacingCamera:
         assert palm_facing_camera(frame) is False
 
     def test_right_hand_palm_facing(self):
-        # Правая рука, ладонь к камере (зеркальный кадр):
-        # запястье внизу, указательный MCP левее мизинца → cross > 0 → True
-        pts = [(0.5, 0.7)] * 21
-        pts[0]  = (0.50, 0.70)  # WRIST
-        pts[5]  = (0.40, 0.50)  # INDEX_MCP (левее)
-        pts[17] = (0.60, 0.50)  # PINKY_MCP (правее)
-        frame = _make_frame(pts, hand_label="Right")
-        assert palm_facing_camera(frame) is True
-
-    def test_right_hand_back_facing(self):
-        # Правая рука, тыл к камере:
-        # запястье внизу, указательный MCP правее мизинца → cross < 0 → False
+        # Правая рука, ладонь к камере: после flip указательный MCP правее мизинца.
+        # vi=(+0.1,−0.2,0), vp=(−0.1,−0.2,0) → nz = (+0.1)(−0.2)−(−0.2)(−0.1) = −0.04
+        # Right + nz < 0 → True ✓
         pts = [(0.5, 0.7)] * 21
         pts[0]  = (0.50, 0.70)  # WRIST
         pts[5]  = (0.60, 0.50)  # INDEX_MCP (правее)
         pts[17] = (0.40, 0.50)  # PINKY_MCP (левее)
+        frame = _make_frame(pts, hand_label="Right")
+        assert palm_facing_camera(frame) is True
+
+    def test_right_hand_back_facing(self):
+        # Правая рука, тыл к камере: указательный MCP левее мизинца.
+        # vi=(−0.1,−0.2,0), vp=(+0.1,−0.2,0) → nz = +0.04
+        # Right + nz > 0 → False ✓
+        pts = [(0.5, 0.7)] * 21
+        pts[0]  = (0.50, 0.70)  # WRIST
+        pts[5]  = (0.40, 0.50)  # INDEX_MCP (левее)
+        pts[17] = (0.60, 0.50)  # PINKY_MCP (правее)
         frame = _make_frame(pts, hand_label="Right")
         assert palm_facing_camera(frame) is False

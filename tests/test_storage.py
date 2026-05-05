@@ -4,9 +4,10 @@ import os
 import pytest
 from src.models import (
     Hand, TestSession, CalibrationProfile, Point2D,
-    TestSummary, BlockScores, Recommendation, RecommendationMode,
+    TestSummary, BlockScores, QualityCategory, Recommendation, RecommendationMode,
     ExerciseResult, ExerciseStatus,
 )
+from src.audit import log_event
 from src.storage.session_storage import save_session
 
 
@@ -34,6 +35,7 @@ def _make_session(with_summary: bool = True) -> TestSession:
                 zone_movement=0, hold_stability=0,
             ),
             total_score=32,
+            quality_category=QualityCategory.POOR,
             recommendation=Recommendation(
                 mode=RecommendationMode.TRAINING,
                 label="Тренировочный режим",
@@ -76,11 +78,15 @@ class TestSaveSession:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         assert d["sessionId"] == "test-save-001"
+        assert d["module"]["name"] == "Finger GYM"
+        assert d["module"]["trackingSource"] == "unknown"
         assert d["patientId"] == "patient-test"
         assert d["hand"] == "right"
         assert "startedAt" in d
         assert "exercises" in d
         assert "totalScore" in d
+        assert "qualityCategory" in d
+        assert "events" in d
         assert "recommendation" in d
 
     def test_exercises_serialized(self, tmp_path, monkeypatch):
@@ -113,6 +119,7 @@ class TestSaveSession:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
         assert d["recommendation"]["mode"] == "training"
+        assert d["qualityCategory"] == "poor"
 
     def test_session_without_summary(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -123,6 +130,7 @@ class TestSaveSession:
             d = json.load(f)
         assert d["totalScore"] is None
         assert d["recommendation"] is None
+        assert d["technicalValidity"]["isInterpretable"] is False
 
     def test_calibration_saved(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -133,3 +141,15 @@ class TestSaveSession:
             d = json.load(f)
         assert d["calibration"]["palmWidth"] == 0.15
         assert d["calibration"]["palmCenter"]["x"] == 0.5
+
+    def test_events_serialized(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "src.storage.session_storage.SESSIONS_DIR", str(tmp_path)
+        )
+        session = _make_session()
+        log_event(session, "test_event", "event message", details={"x": 1})
+        path = save_session(session)
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        assert d["events"][0]["type"] == "test_event"
+        assert d["events"][0]["details"]["x"] == 1
