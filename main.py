@@ -17,7 +17,7 @@ from src.audit import log_event
 from src.models import Hand, TestSession
 from src.tracking.factory import create_tracker
 from src.processing.calibration import CalibrationCollector
-from src.exercises.exercises import create_exercises
+from src.exercises.exercises import create_exercises, EXERCISE_ORDER
 from src.scoring.engine import build_summary
 from src.storage.session_storage import save_session
 from src.presentation.renderer import Renderer
@@ -398,6 +398,13 @@ def run():
 
             if should_quit(key):
                 break
+
+            if key == ord(' '):  # Space — повторить упражнение заново
+                exercises[ex_index] = EXERCISE_ORDER[ex_index](calibration)
+                log_event(session, "exercise_restarted", "Exercise restarted by user", details={
+                    "exerciseId": exercise.exercise_id,
+                })
+                continue
 
             if key in (ord('s'), ord('S')):
                 result = exercise.evaluate()

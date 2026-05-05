@@ -6,13 +6,14 @@ from src.models import TrackingFrame, Point2D, CalibrationProfile
 # ── Индексы ключевых точек MediaPipe ──────────────────────────────────────────
 WRIST = 0
 THUMB_TIP = 4
-INDEX_MCP = 5; INDEX_TIP = 8
-MIDDLE_MCP = 9; MIDDLE_TIP = 12
-RING_MCP = 13; RING_TIP = 16
-PINKY_MCP = 17; PINKY_TIP = 20
+INDEX_MCP = 5;  INDEX_PIP = 6;  INDEX_DIP = 7;  INDEX_TIP = 8
+MIDDLE_MCP = 9; MIDDLE_PIP = 10; MIDDLE_DIP = 11; MIDDLE_TIP = 12
+RING_MCP = 13;  RING_PIP = 14;  RING_DIP = 15;  RING_TIP = 16
+PINKY_MCP = 17; PINKY_PIP = 18; PINKY_DIP = 19; PINKY_TIP = 20
 
 LONG_FINGER_TIPS = [INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]
 LONG_FINGER_MCPS = [INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]
+LONG_FINGER_PIPS = [INDEX_PIP, MIDDLE_PIP, RING_PIP, PINKY_PIP]
 
 # Опорные точки ладони для расчёта palmWidth (запястье — основание мизинца)
 PALM_BASE_A = WRIST
@@ -85,14 +86,38 @@ def finger_curl(tip: Point2D, mcp: Point2D, palm_width: float) -> float:
     return max(0.0, min(1.0, 1.0 - d / 1.4))
 
 
+def _angle_3pt(a: Point2D, b: Point2D, c: Point2D) -> float:
+    """Angle at point b in degrees (2D, using x/y only)."""
+    ba_x, ba_y = a.x - b.x, a.y - b.y
+    bc_x, bc_y = c.x - b.x, c.y - b.y
+    dot = ba_x * bc_x + ba_y * bc_y
+    mag = math.hypot(ba_x, ba_y) * math.hypot(bc_x, bc_y)
+    if mag < 1e-9:
+        return 180.0
+    return math.degrees(math.acos(max(-1.0, min(1.0, dot / mag))))
+
+
+def finger_curl_angle(mcp: Point2D, pip: Point2D, tip: Point2D) -> float:
+    """
+    Angle-based curl: 0.0 (straight, ~180°) → 1.0 (fully bent, ~30°).
+    Uses MCP→PIP→TIP angle for better depth-independent detection.
+    """
+    angle = _angle_3pt(mcp, pip, tip)
+    # 170° = straight (0 curl), 40° = fully bent (1.0 curl)
+    return max(0.0, min(1.0, (170.0 - angle) / 130.0))
+
+
 def all_finger_curls(frame: TrackingFrame, palm_width: float) -> list[float]:
-    """Возвращает curl для 4 длинных пальцев [указательный, средний, безымянный, мизинец]."""
+    """Возвращает curl для 4 длинных пальцев [указательный, средний, безымянный, мизинец].
+    Смешивает дистанционный и угловой методы для устойчивости."""
     if not frame.is_valid or len(frame.landmarks) < 21:
         return [0.0, 0.0, 0.0, 0.0]
-    return [
-        finger_curl(frame.landmarks[tip], frame.landmarks[mcp], palm_width)
-        for tip, mcp in zip(LONG_FINGER_TIPS, LONG_FINGER_MCPS)
-    ]
+    result = []
+    for tip_idx, mcp_idx, pip_idx in zip(LONG_FINGER_TIPS, LONG_FINGER_MCPS, LONG_FINGER_PIPS):
+        dist_curl = finger_curl(frame.landmarks[tip_idx], frame.landmarks[mcp_idx], palm_width)
+        ang_curl = finger_curl_angle(frame.landmarks[mcp_idx], frame.landmarks[pip_idx], frame.landmarks[tip_idx])
+        result.append((dist_curl + ang_curl) / 2.0)
+    return result
 
 
 def index_finger_curl(frame: TrackingFrame, palm_width: float) -> float:
@@ -159,6 +184,26 @@ def palm_facing_camera(frame: TrackingFrame) -> bool:
         return nz < 0
     else:
         return nz > 0
+
+
+def finger_spread(frame: TrackingFrame, palm_width: float) -> float:
+    """Average normalized distance between adjacent fingertips — proxy for spread."""
+    if not frame.is_valid or len(frame.landmarks) < 21 or palm_width <= 0:
+        return 0.0
+    tips = [frame.landmarks[i] for i in LONG_FINGER_TIPS]
+    pairs = [(tips[i], tips[i+1]) for i in range(len(tips) - 1)]
+    return sum(_dist(a, b) / palm_width for a, b in pairs) / len(pairs)
+
+
+def fingers_pointing_up(frame: TrackingFrame) -> bool:
+    """True if majority of fingertips are above (lower Y) than their MCPs."""
+    if not frame.is_valid or len(frame.landmarks) < 21:
+        return False
+    up_count = sum(
+        1 for tip_idx, mcp_idx in zip(LONG_FINGER_TIPS, LONG_FINGER_MCPS)
+        if frame.landmarks[tip_idx].y < frame.landmarks[mcp_idx].y
+    )
+    return up_count >= 3
 
 
 # ── valid tracking ratio ───────────────────────────────────────────────────────

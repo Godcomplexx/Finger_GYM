@@ -10,6 +10,8 @@ from src.processing.metrics import (
     index_finger_curl,
     palm_facing_camera,
     compute_palm_center,
+    finger_spread,
+    fingers_pointing_up,
 )
 
 
@@ -19,17 +21,17 @@ class OpenPalmExercise(BaseExercise):
     exercise_id = "open_palm"
     instruction = "Покажите открытую ладонь — разогните все пальцы и держите"
     max_score = 10
-    required_hold_sec = 2.0
+    required_hold_sec = 3.0
     min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         pw = self.calibration.palm_width
         tip_dist = avg_tip_to_palm_distance(frame, pw)
         curls = all_finger_curls(frame, pw)
-        # 3 из 4 пальцев разогнуты (curl < 0.45 — смягчён с 0.35)
-        extended = sum(1 for c in curls if c < 0.45)
-        # Кончики пальцев достаточно далеко от ладони (смягчён с 0.7 → 0.55)
-        return extended >= 3 and tip_dist > 0.55
+        extended = sum(1 for c in curls if c < 0.40)
+        spread = finger_spread(frame, pw)
+        # 3 из 4 пальцев разогнуты, кончики далеко от ладони, пальцы разведены
+        return extended >= 3 and tip_dist > 0.55 and spread > 0.25
 
 
 # ── 2. Кулак ──────────────────────────────────────────────────────────────────
@@ -38,14 +40,14 @@ class FistExercise(BaseExercise):
     exercise_id = "fist"
     instruction = "Сожмите кулак и держите"
     max_score = 15
-    required_hold_sec = 2.0
-    min_hold_sec = 1.0
+    required_hold_sec = 3.0
+    min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         pw = self.calibration.palm_width
         curls = all_finger_curls(frame, pw)
-        # Минимум 3 из 4 длинных пальцев согнуты (curl > 0.45 — смягчён с 0.55)
-        bent = sum(1 for c in curls if c > 0.45)
+        # Все 4 длинных пальца хорошо согнуты
+        bent = sum(1 for c in curls if c > 0.50)
         return bent >= 3
 
 
@@ -55,18 +57,17 @@ class PinchExercise(BaseExercise):
     exercise_id = "pinch"
     instruction = "Сведите большой и указательный пальцы вместе, остальные разогните"
     max_score = 15
-    required_hold_sec = 2.0
-    min_hold_sec = 1.0
+    required_hold_sec = 3.0
+    min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         pw = self.calibration.palm_width
         d  = thumb_index_distance(frame, pw)
-        if d >= 0.30:   # смягчён с 0.25 → 0.30
+        if d >= 0.30:
             return False
-        # Защита от кулака: при настоящем щипке хотя бы 1 из средний/безымянный/мизинец
-        # остаётся относительно свободным (curl < 0.7)
+        # Защита от кулака: хотя бы 1 из средний/безымянный/мизинец свободен (curl < 0.65)
         curls = all_finger_curls(frame, pw)   # [index, middle, ring, pinky]
-        other_all_bent = sum(1 for c in curls[1:] if c > 0.70) == 3
+        other_all_bent = sum(1 for c in curls[1:] if c > 0.65) == 3
         return not other_all_bent
 
 
@@ -76,16 +77,16 @@ class PointGestureExercise(BaseExercise):
     exercise_id = "point_gesture"
     instruction = "Вытяните указательный палец, остальные согните"
     max_score = 10
-    required_hold_sec = 2.0
-    min_hold_sec = 1.0
+    required_hold_sec = 3.0
+    min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         pw = self.calibration.palm_width
         curls = all_finger_curls(frame, pw)   # [index, middle, ring, pinky]
         index_curl = curls[0]
-        others_bent = sum(1 for c in curls[1:] if c > 0.45)
-        # Указательный разогнут (< 0.45), хотя бы 1 из 3 остальных согнут
-        return index_curl < 0.45 and others_bent >= 1
+        # Средний, безымянный, мизинец должны быть хорошо согнуты (>= 2 из 3)
+        others_bent = sum(1 for c in curls[1:] if c > 0.55)
+        return index_curl < 0.40 and others_bent >= 2
 
 
 # ── 5. Ладонь к камере ────────────────────────────────────────────────────────
@@ -94,11 +95,11 @@ class PalmFacingExercise(BaseExercise):
     exercise_id = "palm_facing"
     instruction = "Держите руку вертикально — пальцы вверх, ладонью к камере"
     max_score = 10
-    required_hold_sec = 2.0
-    min_hold_sec = 1.0
+    required_hold_sec = 3.0
+    min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        return palm_facing_camera(frame)
+        return palm_facing_camera(frame) and fingers_pointing_up(frame)
 
 
 # ── 6. Тыльная сторона к камере ───────────────────────────────────────────────
@@ -107,11 +108,11 @@ class BackFacingExercise(BaseExercise):
     exercise_id = "back_facing"
     instruction = "Держите руку вертикально — пальцы вверх, тыльной стороной к камере"
     max_score = 10
-    required_hold_sec = 2.0
-    min_hold_sec = 1.0
+    required_hold_sec = 3.0
+    min_hold_sec = 1.5
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        return not palm_facing_camera(frame)
+        return not palm_facing_camera(frame) and fingers_pointing_up(frame)
 
 
 # ── 7. Перемещение по зонам экрана ────────────────────────────────────────────
@@ -224,11 +225,11 @@ class ZoneMovementExercise(BaseExercise):
 
 class HoldStillExercise(BaseExercise):
     exercise_id = "hold_still"
-    instruction = "Держите руку неподвижно 3 секунды"
+    instruction = "Держите руку неподвижно 4 секунды"
     max_score = 5
-    required_hold_sec = 3.0
-    min_hold_sec = 1.5
-    max_duration_sec = 10.0
+    required_hold_sec = 4.0
+    min_hold_sec = 2.0
+    max_duration_sec = 12.0
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         # Поза обнаружена если рука видна и стабильна (jitter считается в evaluate)

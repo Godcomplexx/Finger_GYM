@@ -106,7 +106,7 @@ class BaseExercise(ABC):
     # ── Статус ────────────────────────────────────────────────────────────────
 
     def is_complete(self) -> bool:
-        return self._hold_time >= self.min_hold_sec
+        return self._hold_time >= self.required_hold_sec
 
     def is_timeout(self) -> bool:
         if self._active_start is None:
