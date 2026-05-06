@@ -62,7 +62,7 @@ class TrackingAdapter:
         self._landmarker = HandLandmarker.create_from_options(options)
         self.model_path = os.path.abspath(model_path)
         self.model_sha256 = tracking_model_sha256()
-        self._frame_ts_ms: int = 0   # монотонная временная метка в мс
+        self._frame_ts_ms: int = 0
 
     def process(self, bgr_frame: np.ndarray | None = None) -> TrackingFrame:
         if bgr_frame is None:
@@ -76,7 +76,7 @@ class TrackingAdapter:
         rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        self._frame_ts_ms += 33   # ~30 fps
+        self._frame_ts_ms += 33
         result = self._landmarker.detect_for_video(mp_image, self._frame_ts_ms)
 
         ts = time.monotonic()

@@ -33,6 +33,24 @@ class OpenPalmExercise(BaseExercise):
         spread = finger_spread(frame, pw)
         return extended >= 3 and tip_dist > 0.55 and spread > 0.25
 
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        pw = self.calibration.palm_width
+        curls = all_finger_curls(frame, pw)
+        extended = sum(1 for c in curls if c < 0.40)
+        if extended < 3:
+            bent_names = ["указат.", "средн.", "безым.", "мизинец"]
+            bent = [bent_names[i] for i, c in enumerate(curls) if c >= 0.40]
+            return f"Разогните: {', '.join(bent)}"
+        tip_dist = avg_tip_to_palm_distance(frame, pw)
+        if tip_dist <= 0.55:
+            return "Выпрямите пальцы дальше от ладони"
+        spread = finger_spread(frame, pw)
+        if spread <= 0.25:
+            return "Разведите пальцы шире"
+        return ""
+
 
 # ── 2. Кулак ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +67,17 @@ class FistExercise(BaseExercise):
         curls = all_finger_curls(frame, pw)
         bent = sum(1 for c in curls if c > 0.50)
         return bent >= 3
+
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        pw = self.calibration.palm_width
+        curls = all_finger_curls(frame, pw)
+        straight_names = ["указат.", "средн.", "безым.", "мизинец"]
+        straight = [straight_names[i] for i, c in enumerate(curls) if c <= 0.50]
+        if straight:
+            return f"Согните: {', '.join(straight)}"
+        return ""
 
 
 # ── 3. Щипковый захват ────────────────────────────────────────────────────────
@@ -70,6 +99,15 @@ class PinchExercise(BaseExercise):
         other_all_bent = sum(1 for c in curls[1:] if c > 0.65) == 3
         return not other_all_bent
 
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        pw = self.calibration.palm_width
+        d = thumb_index_distance(frame, pw)
+        if d >= 0.30:
+            return "Сведите большой и указательный пальцы ближе"
+        return ""
+
 
 # ── 4. Указательный жест ─────────────────────────────────────────────────────
 
@@ -88,6 +126,18 @@ class PointGestureExercise(BaseExercise):
         others_bent = sum(1 for c in curls[1:] if c > 0.55)
         return index_curl < 0.40 and others_bent >= 2
 
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        pw = self.calibration.palm_width
+        curls = all_finger_curls(frame, pw)
+        if curls[0] >= 0.40:
+            return "Вытяните указательный палец"
+        others_bent = sum(1 for c in curls[1:] if c > 0.55)
+        if others_bent < 2:
+            return "Согните остальные пальцы"
+        return ""
+
 
 # ── 5. Ладонь к камере ────────────────────────────────────────────────────────
 
@@ -101,6 +151,15 @@ class PalmFacingExercise(BaseExercise):
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         return palm_facing_camera(frame) and fingers_pointing_up(frame)
+
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        if not palm_facing_camera(frame):
+            return "Повернитесь ладонью к камере"
+        if not fingers_pointing_up(frame):
+            return "Поднимите пальцы вверх"
+        return ""
 
 
 # ── 6. Тыльная сторона к камере ───────────────────────────────────────────────
@@ -116,13 +175,22 @@ class BackFacingExercise(BaseExercise):
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         return not palm_facing_camera(frame) and fingers_pointing_up(frame)
 
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        if not frame.is_valid:
+            return ""
+        if palm_facing_camera(frame):
+            return "Повернитесь тыльной стороной к камере"
+        if not fingers_pointing_up(frame):
+            return "Поднимите пальцы вверх"
+        return ""
+
 
 # ── 7. Перемещение по зонам экрана ────────────────────────────────────────────
 
 ZONES = [
-    (0.25, 0.35),  # левая зона
-    (0.50, 0.35),  # центральная зона
-    (0.75, 0.35),  # правая зона
+    (0.20, 0.50),  # левая зона
+    (0.50, 0.50),  # центральная зона
+    (0.80, 0.50),  # правая зона
 ]
 ZONE_RADIUS = 0.18   # увеличен для пожилых
 ZONE_HOLD_SEC = 1.5  # чуть дольше для надёжности
@@ -141,6 +209,7 @@ class ZoneMovementExercise(BaseExercise):
         self._zone_index = 0
         self._zone_hold_start: float | None = None
         self._zones_hit: list[bool] = [False] * len(ZONES)
+        self._zone_just_hit: bool = False
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
         return frame.is_valid
@@ -160,6 +229,7 @@ class ZoneMovementExercise(BaseExercise):
                 self._zones_hit[self._zone_index] = True
                 self._zone_index += 1
                 self._zone_hold_start = None
+                self._zone_just_hit = True
         else:
             self._zone_hold_start = None
 
@@ -177,6 +247,12 @@ class ZoneMovementExercise(BaseExercise):
 
     def zones_hit(self) -> int:
         return sum(self._zones_hit)
+
+    def consume_zone_hit(self) -> bool:
+        """True если зона только что засчитана (сбрасывается после вызова)."""
+        val = self._zone_just_hit
+        self._zone_just_hit = False
+        return val
 
     def evaluate(self):
         from src.processing.metrics import valid_tracking_ratio, hand_jitter

@@ -158,9 +158,10 @@ def _darken(bgr: np.ndarray, alpha: float = 0.45) -> np.ndarray:
 
 class Renderer:
 
-    def __init__(self, width: int = 1280, height: int = 720):
+    def __init__(self, width: int = 1280, height: int = 720, debug: bool = False):
         self.w = width
         self.h = height
+        self.debug = debug
 
     def _base(self, frame_bgr: np.ndarray) -> np.ndarray:
         img = cv2.resize(frame_bgr, (self.w, self.h))
@@ -251,6 +252,115 @@ class Renderer:
             cv2.circle(img, pointer, 5,  _WHITE_BGR, -1, cv2.LINE_AA)
         return img
 
+    # ── Экран позиционирования руки ───────────────────────────────────────────
+
+    def draw_positioning_guide(
+        self,
+        frame_bgr: np.ndarray,
+        tracking: TrackingFrame,
+        distance_status: str,     # "far" | "ok" | "close"
+        held_sec: float,
+        required_sec: float,
+    ) -> np.ndarray:
+        """Показывает инструкцию по расстоянию и положению руки перед калибровкой."""
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+
+        self._draw_header(img, "Шаг 1 из 2 — Расположите руку перед камерой")
+
+        # ── Целевая зона: прямоугольник в центре кадра ────────────────────────
+        zone_w = int(W * 0.46)
+        zone_h = int(H * 0.58)
+        zx1    = (W - zone_w) // 2
+        zy1    = int(H * 0.14)
+        zx2    = zx1 + zone_w
+        zy2    = zy1 + zone_h
+
+        if distance_status == "ok":
+            zone_color = _GREEN_BGR
+        elif distance_status == "far":
+            zone_color = _bgr(_YELLOW)
+        else:
+            zone_color = _RED_BGR
+
+        # Угловые маркеры вместо сплошного прямоугольника
+        corner = 32
+        thick  = 3
+        for (sx, sy, dx, dy) in [
+            (zx1, zy1, +1, +1), (zx2, zy1, -1, +1),
+            (zx1, zy2, +1, -1), (zx2, zy2, -1, -1),
+        ]:
+            cv2.line(img, (sx, sy), (sx + dx * corner, sy), zone_color, thick, cv2.LINE_AA)
+            cv2.line(img, (sx, sy), (sx, sy + dy * corner), zone_color, thick, cv2.LINE_AA)
+
+        # Силуэт ладони (простая подсказка: кружок с линиями-пальцами)
+        palm_cx = W // 2
+        palm_cy = (zy1 + zy2) // 2
+        silhouette_alpha = 0.18
+        overlay = img.copy()
+        cv2.circle(overlay, (palm_cx, palm_cy), 42, zone_color, -1)
+        import math
+        for angle_deg, length in [(-70, 55), (-35, 62), (0, 65), (35, 62), (70, 48)]:
+            rad = math.radians(angle_deg - 90)
+            ex = int(palm_cx + math.cos(rad) * length)
+            ey = int(palm_cy + math.sin(rad) * length)
+            cv2.line(overlay, (palm_cx, palm_cy - 28), (ex, ey), zone_color, 10)
+        cv2.addWeighted(overlay, silhouette_alpha, img, 1 - silhouette_alpha, 0, img)
+
+        # ── Нижняя панель с инструкцией ───────────────────────────────────────
+        _panel(img, 0, H - 180, W, H, alpha=0.92, bg=_BG_BGR)
+        pil = _bgr_to_pil(img)
+        d   = ImageDraw.Draw(pil)
+
+        # Статус и цвет
+        if not tracking.is_valid:
+            status_text = "Руку не видно — поднесите ладонь к камере"
+            status_color = _GRAY
+        elif distance_status == "far":
+            status_text = "Рука слишком далеко — придвиньтесь ближе к камере"
+            status_color = _YELLOW
+        elif distance_status == "close":
+            status_text = "Рука слишком близко — отодвиньтесь немного"
+            status_color = _RED
+        else:
+            status_text = "Отличное положение! Держите руку неподвижно..."
+            status_color = _GREEN
+
+        _put(d, status_text, (24, H - 164), _F_LG_B, status_color)
+        _put(d, "Поместите открытую ладонь в рамку. Тест начнётся автоматически.",
+             (24, H - 118), _F_MD, _GRAY)
+
+        # Иконки расстояния (близко / хорошо / далеко)
+        icon_y = H - 80
+        segments = [
+            ("далеко",  distance_status == "far",   W // 2 - 200),
+            ("хорошо",  distance_status == "ok",    W // 2 - 40),
+            ("близко",  distance_status == "close", W // 2 + 120),
+        ]
+        for label, active, ix in segments:
+            col = _GREEN if (active and label == "хорошо") else _YELLOW if (active and label == "далеко") else _RED if active else _BORDER
+            _put(d, ("●  " if active else "○  ") + label, (ix, icon_y), _F_MD_B if active else _F_MD, col)
+
+        img[:] = _pil_to_bgr(pil)
+
+        # Прогресс-бар удержания
+        ratio = min(1.0, held_sec / required_sec) if required_sec > 0 else 0.0
+        fg    = _GREEN_BGR if distance_status == "ok" else _BORDER_BGR
+        _progress_bar(img, 24, H - 28, W - 48, 16, ratio, fg=fg)
+        _tracking_dot(img, W - 34, 34, tracking.is_valid)
+
+        # Скелет руки
+        if tracking.is_valid and tracking.landmarks:
+            hh, hw = img.shape[:2]
+            pts = [(int(p.x * hw), int(p.y * hh)) for p in tracking.landmarks]
+            for a, b in HAND_CONNECTIONS:
+                if a < len(pts) and b < len(pts):
+                    cv2.line(img, pts[a], pts[b], zone_color, 1, cv2.LINE_AA)
+            for pt in pts:
+                cv2.circle(img, pt, 3, _WHITE_BGR, -1)
+
+        return img
+
     # ── Экран калибровки ──────────────────────────────────────────────────────
 
     def draw_calibration(self, frame_bgr: np.ndarray,
@@ -259,7 +369,7 @@ class Renderer:
                          duration: float) -> np.ndarray:
         img = self._base(frame_bgr)
         W, H = self.w, self.h
-        self._draw_header(img, "Шаг 1 из 2 — Калибровка")
+        self._draw_header(img, "Шаг 2 из 2 — Калибровка")
 
         ratio = min(1.0, elapsed / duration) if duration > 0 else 0.0
         color = _GREEN_BGR if tracking.is_valid else _bgr(_YELLOW)
@@ -294,6 +404,86 @@ class Renderer:
         _progress_bar(img, 24, H - 36, W - 48, 16, ratio,
                       fg=_GREEN_BGR if tracking.is_valid else _bgr(_YELLOW))
         _tracking_dot(img, W - 34, 34, tracking.is_valid)
+        return img
+
+    # ── Экран ввода patient ID ────────────────────────────────────────────────
+
+    def draw_patient_id_input(self, frame_bgr: np.ndarray,
+                              current_text: str,
+                              error: str = "") -> np.ndarray:
+        """Экран ввода идентификатора пациента с клавиатуры."""
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "Идентификация пациента")
+
+        cw, ch = min(720, W - 80), 280
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.93)
+
+        pil = _bgr_to_pil(img)
+        d   = ImageDraw.Draw(pil)
+
+        _put(d, "Введите ID пациента:", (cx + 28, cy + 22), _F_LG_B, _WHITE)
+        _put(d, "Используйте клавиатуру. Enter — подтвердить. Backspace — удалить.",
+             (cx + 28, cy + 62), _F_SM, _GRAY)
+
+        # Поле ввода
+        field_y = cy + 108
+        img[:] = _pil_to_bgr(pil)
+        _panel(img, cx + 24, field_y, cx + cw - 24, field_y + 52, alpha=0.60, bg=_BG_BGR)
+        cv2.rectangle(img, (cx + 24, field_y), (cx + cw - 24, field_y + 52),
+                      _ACCENT_BGR, 2, cv2.LINE_AA)
+
+        pil2 = _bgr_to_pil(img)
+        d2   = ImageDraw.Draw(pil2)
+        display_text = current_text + "│"  # курсор
+        _put(d2, display_text, (cx + 36, field_y + 10), _F_LG_B, _ACCENT)
+
+        if error:
+            _put(d2, f"⚠  {error}", (cx + 28, cy + 176), _F_MD, _RED)
+
+        _put(d2, "Enter — продолжить    Esc — использовать patient-001",
+             (cx + 28, cy + ch - 32), _F_SM, _GRAY)
+
+        img[:] = _pil_to_bgr(pil2)
+        return img
+
+    # ── Экран сбоя калибровки ─────────────────────────────────────────────────
+
+    def draw_calibration_failed(self, frame_bgr: np.ndarray,
+                                valid_ratio: float,
+                                attempt: int) -> np.ndarray:
+        """Экран плохого освещения / плохой калибровки с предложением повторить."""
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "Калибровка не пройдена")
+
+        cw, ch = min(760, W - 80), 320
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.93)
+
+        pil = _bgr_to_pil(img)
+        d   = ImageDraw.Draw(pil)
+
+        _put(d, "Недостаточное качество трекинга", (cx + 28, cy + 22), _F_LG_B, _RED)
+
+        tips = [
+            f"Качество трекинга: {int(valid_ratio * 100)}%  (нужно ≥ 70%)",
+            "● Улучшите освещение — включите свет перед собой",
+            "● Держите ладонь открытой, пальцы разведены",
+            "● Не двигайте рукой во время калибровки",
+            "● Камера должна видеть всю ладонь целиком",
+        ]
+        for i, tip in enumerate(tips):
+            color = _YELLOW if i == 0 else _GRAY
+            _put(d, tip, (cx + 28, cy + 72 + i * 34), _F_MD, color)
+
+        _put(d, f"Попытка {attempt}  —  Пробел: повторить    Esc: выйти",
+             (cx + 28, cy + ch - 36), _F_MD_B, _ACCENT)
+
+        img[:] = _pil_to_bgr(pil)
         return img
 
     # ── Экран подготовки (перед каждым заданием) ──────────────────────────────
@@ -434,10 +624,13 @@ class Renderer:
 
         _put(d2, exercise.instruction, (24, H - 148), _F_MD_B, _WHITE)
 
-        # Подсказка позиционирования
+        # Подсказка позиционирования или причина незасчитанной позы
         hint = exercise.position_hint()
+        fail_reason = "" if done else exercise.pose_fail_reason(tracking)
         if hint:
             _put(d2, f"⚠  {hint}", (24, H - 112), _F_MD, _YELLOW)
+        elif fail_reason and tracking.is_valid and not done:
+            _put(d2, f"✗  {fail_reason}", (24, H - 112), _F_MD_B, _RED)
         else:
             if done:
                 _put(d2, "✓  Выполнено!", (24, H - 112), _F_LG_B, _GREEN)
@@ -457,6 +650,17 @@ class Renderer:
         _put(d3, "Пробел — повторить   Esc — выйти",
              (24, H - 26), _F_SM, _BORDER)
         img[:] = _pil_to_bgr(pil3)
+
+        # Пауза при потере руки (grace period)
+        if not tracking.is_valid and exercise.is_hand_lost():
+            remaining = exercise.grace_remaining()
+            pil_p = _bgr_to_pil(img)
+            d_p   = ImageDraw.Draw(pil_p)
+            pause_txt = f"⏸  Рука потеряна — пауза {remaining:.1f} с"
+            bbox = d_p.textbbox((0, 0), pause_txt, font=_F_LG_B)
+            tw = bbox[2] - bbox[0]
+            _put(d_p, pause_txt, (W // 2 - tw // 2, H // 2 - 24), _F_LG_B, _YELLOW)
+            img[:] = _pil_to_bgr(pil_p)
 
         if isinstance(exercise, ZoneMovementExercise):
             self._draw_zones(img, exercise)
@@ -480,8 +684,9 @@ class Renderer:
                      (W // 2 - 180, H - 160), _F_MD_B, color_now)
                 img[:] = _pil_to_bgr(pil3)
 
-        # Дебаг-панель: curl пальцев (правый верхний угол)
-        self._draw_curl_debug(img, tracking, exercise)
+        # Дебаг-панель: curl пальцев (правый верхний угол, только с --debug)
+        if self.debug:
+            self._draw_curl_debug(img, tracking, exercise)
 
         return img
 
@@ -529,8 +734,9 @@ class Renderer:
         img[:] = _pil_to_bgr(pil3)
 
     def _draw_zones(self, img: np.ndarray, ex: ZoneMovementExercise):
-        W, H   = self.w, self.h
+        W, H    = self.w, self.h
         current = ex.current_zone()
+        hold_p  = ex.zone_hold_progress()
         for i, (zx, zy) in enumerate(ZONES):
             cx = int(zx * W)
             cy = int(zy * H)
@@ -541,15 +747,30 @@ class Renderer:
                 color = _ACCENT_BGR; thick = 3
             else:
                 color = _BORDER_BGR; thick = 1
-            if i == current:
-                overlay = img.copy()
+
+            # Полупрозрачная заливка активной и выполненных зон
+            overlay = img.copy()
+            fill_alpha = 0.22 if i == current else (0.10 if i < current else 0.0)
+            if fill_alpha > 0:
                 cv2.circle(overlay, (cx, cy), r, color, -1)
-                cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
+                cv2.addWeighted(overlay, fill_alpha, img, 1 - fill_alpha, 0, img)
+
             cv2.circle(img, (cx, cy), r, color, thick, cv2.LINE_AA)
+
+            # Дуга прогресса удержания в текущей зоне
+            if i == current and hold_p > 0:
+                cv2.ellipse(img, (cx, cy), (r, r), -90, 0,
+                            int(360 * hold_p), _ACCENT_BGR, 5, cv2.LINE_AA)
+
             pil = _bgr_to_pil(img)
             d   = ImageDraw.Draw(pil)
-            _put(d, str(i + 1), (cx - 8, cy - 14), _F_MD_B,
-                 _GREEN if i < current else _ACCENT if i == current else _GRAY)
+            num_txt = str(i + 1)
+            bbox = d.textbbox((0, 0), num_txt, font=_F_LG_B)
+            tw = bbox[2] - bbox[0]
+            num_color = _GREEN if i < current else _ACCENT if i == current else _GRAY
+            _put(d, num_txt, (cx - tw // 2, cy - 16), _F_LG_B, num_color)
+            if i < current:
+                _put(d, "✓", (cx - 10, cy + 4), _F_MD_B, _GREEN)
             img[:] = _pil_to_bgr(pil)
 
     # ── Экран итогов ──────────────────────────────────────────────────────────

@@ -25,11 +25,16 @@ def _make_serializable(obj):
 
 def save_session(session: TestSession) -> str:
     """Сохраняет сессию в JSON-файл. Возвращает путь к файлу."""
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    safe_patient = "".join(
+        c if c.isalnum() or c in ("-", "_") else "_"
+        for c in session.patient_id
+    )[:64] or "unknown"
+    patient_dir = os.path.join(SESSIONS_DIR, safe_patient)
+    os.makedirs(patient_dir, exist_ok=True)
 
     dt = datetime.fromtimestamp(session.started_at, tz=timezone.utc)
     filename = f"{session.session_id}_{dt.strftime('%Y%m%d_%H%M%S')}.json"
-    filepath = os.path.join(SESSIONS_DIR, filename)
+    filepath = os.path.join(patient_dir, filename)
 
     summary = session.summary
     calib = session.calibration

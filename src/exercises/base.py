@@ -125,6 +125,10 @@ class BaseExercise(ABC):
     @abstractmethod
     def _pose_detected(self, frame: TrackingFrame) -> bool: ...
 
+    def pose_fail_reason(self, frame: TrackingFrame) -> str:
+        """Короткое объяснение почему поза не засчитана (пустая строка = засчитана)."""
+        return ""
+
     # ── Статус ────────────────────────────────────────────────────────────────
 
     def is_complete(self) -> bool:
@@ -146,6 +150,19 @@ class BaseExercise(ABC):
     def position_hint(self) -> str:
         """Подсказка по позиционированию для текущего кадра (пустая строка = всё хорошо)."""
         return self._position_hint
+
+    def is_hand_lost(self) -> bool:
+        """True если рука потеряна и идёт grace period (пауза, не сброс)."""
+        if self._lost_start is None:
+            return False
+        return (time.monotonic() - self._lost_start) <= HOLD_GRACE_SEC
+
+    def grace_remaining(self) -> float:
+        """Секунд до сброса удержания (0 если нет паузы)."""
+        if self._lost_start is None:
+            return 0.0
+        remaining = HOLD_GRACE_SEC - (time.monotonic() - self._lost_start)
+        return max(0.0, remaining)
 
     # ── Оценка ────────────────────────────────────────────────────────────────
 
