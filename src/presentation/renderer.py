@@ -31,16 +31,45 @@ _RED_BGR    = _bgr(_RED)
 _WHITE_BGR  = _bgr(_WHITE)
 _GRAY_BGR   = _bgr(_GRAY)
 
-# ── Шрифты (Segoe UI — хорошая кириллица) ────────────────────────────────────
-_FONT_PATH      = "C:/Windows/Fonts/segoeui.ttf"
-_FONT_BOLD_PATH = "C:/Windows/Fonts/segoeuib.ttf"
+# ── Шрифты ───────────────────────────────────────────────────────────────────
+import sys as _sys
+import os as _os
+
+def _find_font(bold: bool = False) -> str | None:
+    """Ищет шрифт с поддержкой кириллицы на Windows/macOS/Linux."""
+    if _sys.platform == "win32":
+        candidates = [
+            r"C:\Windows\Fonts\segoeui.ttf" if not bold else r"C:\Windows\Fonts\segoeuib.ttf",
+            r"C:\Windows\Fonts\arial.ttf"   if not bold else r"C:\Windows\Fonts\arialbd.ttf",
+            r"C:\Windows\Fonts\tahoma.ttf",
+        ]
+    elif _sys.platform == "darwin":
+        candidates = [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ]
+    else:  # Linux
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        ]
+    for path in candidates:
+        if _os.path.exists(path):
+            return path
+    return None
 
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    path = _FONT_BOLD_PATH if bold else _FONT_PATH
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return ImageFont.load_default()
+    path = _find_font(bold)
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
 
 _F_SM   = _font(18)
 _F_MD   = _font(22)
