@@ -46,15 +46,6 @@ def point_in_rect(point: tuple[int, int], rect: tuple[int, int, int, int]) -> bo
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
-def tracker_button_rects(width: int, height: int) -> dict[str, tuple[int, int, int, int]]:
-    cw, ch = 760, 360
-    cx = (width - cw) // 2
-    cy = (height - ch) // 2
-    return {
-        "mediapipe": (cx + 28, cy + 88, cx + cw - 28, cy + 174),
-        "ultraleap": (cx + 28, cy + 190, cx + cw - 28, cy + 276),
-    }
-
 
 def hand_button_rects(width: int, height: int) -> dict[Hand, tuple[int, int, int, int]]:
     cw, ch = 560, 300
@@ -88,7 +79,7 @@ def parse_args():
     p.add_argument("--patient", type=str, default="patient-001")
     p.add_argument("--width",   type=int, default=1280)
     p.add_argument("--height",  type=int, default=720)
-    p.add_argument("--tracker", choices=("mediapipe", "ultraleap"), default=None)
+    p.add_argument("--tracker", choices=("mediapipe",), default="mediapipe")
     return p.parse_args()
 
 
@@ -119,65 +110,14 @@ def show(img: np.ndarray) -> int:
 
 
 def read_frame(
-    cap: cv2.VideoCapture | None,
+    cap: cv2.VideoCapture,
     width: int,
     height: int,
 ) -> tuple[bool, np.ndarray]:
-    if cap is None:
-        return True, virtual_ultraleap_frame(width, height)
-
     ok, bgr = cap.read()
     if not ok:
         return False, np.zeros((height, width, 3), dtype=np.uint8)
     return True, cv2.flip(bgr, 1)
-
-
-def virtual_ultraleap_frame(width: int, height: int) -> np.ndarray:
-    img = np.zeros((height, width, 3), dtype=np.uint8)
-    img[:] = (24, 22, 20)
-
-    step = max(40, width // 16)
-    grid_color = (42, 46, 60)
-    for x in range(0, width, step):
-        cv2.line(img, (x, 0), (x, height), grid_color, 1, cv2.LINE_AA)
-    for y in range(0, height, step):
-        cv2.line(img, (0, y), (width, y), grid_color, 1, cv2.LINE_AA)
-
-    cx, cy = width // 2, height // 2
-    cv2.line(img, (cx, 0), (cx, height), (55, 70, 85), 1, cv2.LINE_AA)
-    cv2.line(img, (0, cy), (width, cy), (55, 70, 85), 1, cv2.LINE_AA)
-
-    margin_x = int(width * 0.18)
-    margin_y = int(height * 0.16)
-    cv2.rectangle(
-        img,
-        (margin_x, margin_y),
-        (width - margin_x, height - margin_y),
-        (85, 130, 120),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        img,
-        "Ultraleap 3D workspace",
-        (margin_x + 16, margin_y + 34),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (150, 210, 205),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        img,
-        "Place hand above the sensor",
-        (margin_x + 16, margin_y + 66),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (160, 165, 180),
-        1,
-        cv2.LINE_AA,
-    )
-    return img
 
 
 def cleanup(cap: cv2.VideoCapture | None):
@@ -185,27 +125,6 @@ def cleanup(cap: cv2.VideoCapture | None):
         cap.release()
     cv2.destroyAllWindows()
 
-
-def select_tracker(args: argparse.Namespace, renderer: Renderer) -> str | None:
-    if args.tracker:
-        return args.tracker
-
-    blank = np.zeros((args.height, args.width, 3), dtype=np.uint8)
-    rects = tracker_button_rects(args.width, args.height)
-    while True:
-        hover = hit_target(_mouse_state["pos"], rects)
-        img = renderer.draw_tracker_select(blank, hover_key=hover)
-        key = show(img)
-        click_target = hit_target(consume_mouse_click(), rects)
-        if click_target:
-            return click_target
-
-        if should_quit(key):
-            return None
-        if key in (ord('1'), ord('m'), ord('M')):
-            return "mediapipe"
-        if key in (ord('2'), ord('u'), ord('U')):
-            return "ultraleap"
 
 
 def show_startup_error(args: argparse.Namespace, renderer: Renderer, message: str) -> None:
@@ -224,28 +143,16 @@ def run():
     cv2.setMouseCallback(WINDOW, on_mouse)
 
     renderer = Renderer(args.width, args.height)
-    tracker_name = select_tracker(args, renderer)
-    if tracker_name is None:
+
+    try:
+        tracker_context = create_tracker(args.tracker)
+    except RuntimeError as exc:
+        show_startup_error(args, renderer, str(exc))
         cleanup(cap)
         return
 
-    while True:
-        try:
-            tracker_context = create_tracker(tracker_name)
-            break
-        except RuntimeError as exc:
-            show_startup_error(args, renderer, str(exc))
-            if args.tracker:
-                cleanup(cap)
-                return
-            tracker_name = select_tracker(args, renderer)
-            if tracker_name is None:
-                cleanup(cap)
-                return
-
     with tracker_context as tracker:
-        if tracker.requires_video:
-            cap = open_camera(args.camera, args.width, args.height)
+        cap = open_camera(args.camera, args.width, args.height)
 
         # ── Шаг 1: выбор руки ─────────────────────────────────────────────────
         selected_hand: Hand | None = None
@@ -256,7 +163,7 @@ def run():
             ok, bgr = read_frame(cap, args.width, args.height)
             if not ok:
                 continue
-            frame = tracker.process(bgr if tracker.requires_video else None)
+            frame = tracker.process(bgr)
             pointer = hand_pointer(frame, args.width, args.height)
             hand_hover = hit_target(pointer, hand_rects)
             mouse_hover = hit_target(_mouse_state["pos"], hand_rects)
@@ -327,7 +234,7 @@ def run():
             ok, bgr = read_frame(cap, args.width, args.height)
             if not ok:
                 continue
-            frame = tracker.process(bgr if tracker.requires_video else None)
+            frame = tracker.process(bgr)
             collector.feed(frame)
             img   = renderer.draw_calibration(bgr, frame, collector.elapsed(), 2.0)
             img   = renderer.draw_tracking_overlay(img, frame)
@@ -364,10 +271,11 @@ def run():
             ok, bgr = read_frame(cap, args.width, args.height)
             if not ok:
                 continue
-            frame = tracker.process(bgr if tracker.requires_video else None)
+            frame = tracker.process(bgr)
 
-            # ── Фаза подготовки: показываем инструкцию, ждём Space/Enter ────
+            # ── Фаза подготовки: показываем инструкцию, автостарт ────────────
             if exercise.is_preparing():
+                exercise.notify_hand_visible(frame)  # для автостарта по руке
                 img = renderer.draw_prepare(bgr, exercise,
                                             ex_index + 1, total_ex)
                 img = renderer.draw_tracking_overlay(img, frame)
@@ -382,11 +290,17 @@ def run():
                         "exerciseId": exercise.exercise_id,
                     })
                     ex_index += 1
-                elif key in (ord(' '), 13):  # Space или Enter
+                elif key in (ord(' '), 13):
                     exercise.confirm_start()
                     log_event(session, "exercise_started", "Exercise started", details={
                         "exerciseId": exercise.exercise_id,
                     })
+                else:
+                    # Автостарт: is_preparing вернул False на следующей итерации
+                    if not exercise.is_preparing():
+                        log_event(session, "exercise_started", "Exercise started", details={
+                            "exerciseId": exercise.exercise_id,
+                        })
                 continue  # ждём конца фазы подготовки
 
             # ── Активная фаза: принимаем кадры и считаем удержание ───────────
@@ -440,12 +354,15 @@ def run():
             print(f"[OK] {filepath}")
             print(f"     Балл: {summary.total_score}/100  |  {summary.recommendation.label}")
 
+            SUMMARY_SHOW_SEC = 12.0
+            summary_start = time.monotonic()
             while True:
                 ok, bgr = read_frame(cap, args.width, args.height)
-                img = renderer.draw_summary(bgr, summary)
+                remaining = max(0.0, SUMMARY_SHOW_SEC - (time.monotonic() - summary_start))
+                img = renderer.draw_summary(bgr, summary, autoclose_sec=remaining)
                 key = show(img)
 
-                if key != 255 or window_closed():
+                if key != 255 or window_closed() or remaining <= 0:
                     break
 
     cleanup(cap)

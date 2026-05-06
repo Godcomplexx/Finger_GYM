@@ -148,45 +148,6 @@ class Renderer:
             _put(d, subtitle, (22, 42), _F_SM, _GRAY)
         img[:] = _pil_to_bgr(pil)
 
-    # ── Экран выбора руки ─────────────────────────────────────────────────────
-
-    def draw_tracker_select(self, frame_bgr: np.ndarray, hover_key: str | None = None) -> np.ndarray:
-        img = self._base(frame_bgr)
-        W, H = self.w, self.h
-        self._draw_header(img, "Выбор источника трекинга")
-
-        cw, ch = 760, 360
-        cx = (W - cw) // 2
-        cy = (H - ch) // 2
-        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.90)
-
-        pil = _bgr_to_pil(img)
-        d = ImageDraw.Draw(pil)
-
-        _put(d, "Выберите трекер", (cx + 28, cy + 24), _F_XL_B, _WHITE)
-        _put(d, "1", (cx + 44, cy + 94), _F_XXL, _GREEN)
-        _put(d, "MediaPipe + веб-камера", (cx + 116, cy + 104), _F_LG_B, _GREEN)
-        _put(d, "Быстрый режим без отдельного оборудования", (cx + 116, cy + 142), _F_SM, _GRAY)
-
-        _put(d, "2", (cx + 44, cy + 196), _F_XXL, _ACCENT)
-        _put(d, "Ultraleap LeapC", (cx + 116, cy + 206), _F_LG_B, _ACCENT)
-        _put(d, "3D-трекинг кисти через датчик Ultraleap", (cx + 116, cy + 244), _F_SM, _GRAY)
-
-        _put(d, "Нажмите 1/M или 2/U, либо кликните мышью. Q или Esc - выход.", (cx + 28, cy + 310), _F_SM, _GRAY)
-
-        img[:] = _pil_to_bgr(pil)
-
-        buttons = {
-            "mediapipe": (cx + 28, cy + 88, cx + cw - 28, cy + 174),
-            "ultraleap": (cx + 28, cy + 190, cx + cw - 28, cy + 276),
-        }
-        for key, rect in buttons.items():
-            color = _GREEN_BGR if key == "mediapipe" else _ACCENT_BGR
-            border = color if key == hover_key else _BORDER_BGR
-            thickness = 3 if key == hover_key else 1
-            cv2.rectangle(img, rect[:2], rect[2:], border, thickness, cv2.LINE_AA)
-        return img
-
     def draw_error_message(self, frame_bgr: np.ndarray, title: str, message: str) -> np.ndarray:
         img = self._base(frame_bgr)
         W, H = self.w, self.h
@@ -222,8 +183,7 @@ class Renderer:
         W, H = self.w, self.h
         self._draw_header(img, "Модуль тестирования мелкой моторики кисти")
 
-        # Центральная карточка
-        cw, ch = 560, 300
+        cw, ch = 600, 320
         cx = (W - cw) // 2
         cy = (H - ch) // 2
         _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.88)
@@ -233,41 +193,33 @@ class Renderer:
 
         _put(d, "Выберите руку для тестирования",
              (cx + 24, cy + 20), _F_LG_B, _WHITE)
+        _put(d, "Наведите палец на кнопку и подержите",
+             (cx + 24, cy + 58), _F_MD, _GRAY)
 
-        # Кнопка правой руки
-        btn_y = cy + 76
-        _put(d, "R", (cx + 56, btn_y), _F_XXL, _GREEN)
-        _put(d, "Правая рука", (cx + 120, btn_y + 12), _F_LG, _GREEN)
-
-        # Разделитель
-        _put(d, "—", (cx + cw // 2 - 8, btn_y + 18), _F_LG, _GRAY)
-
-        # Кнопка левой руки
-        _put(d, "L", (cx + cw // 2 + 30, btn_y), _F_XXL, _GREEN)
-        _put(d, "Левая рука", (cx + cw // 2 + 94, btn_y + 12), _F_LG, _GREEN)
-
-        _put(d, "Нажмите R/L, кликните мышью или наведите палец и подержите",
-             (cx + 24, cy + 216), _F_SM, _GRAY)
-        _put(d, "Q — выход", (cx + 24, cy + 248), _F_SM, _GRAY)
+        btn_y = cy + 100
+        # Правая рука
+        _put(d, "Правая рука", (cx + 60, btn_y + 18), _F_XL_B, _GREEN)
+        # Левая рука
+        _put(d, "Левая рука",  (cx + cw // 2 + 40, btn_y + 18), _F_XL_B, _GREEN)
 
         img[:] = _pil_to_bgr(pil)
 
         buttons = {
-            "right": (cx + 28, cy + 78, cx + cw // 2 - 18, cy + 178),
-            "left": (cx + cw // 2 + 18, cy + 78, cx + cw - 28, cy + 178),
+            "right": (cx + 28, cy + 96, cx + cw // 2 - 18, cy + 210),
+            "left":  (cx + cw // 2 + 18, cy + 96, cx + cw - 28, cy + 210),
         }
         hover_value = getattr(hover_key, "value", hover_key)
         for key, rect in buttons.items():
             border = _GREEN_BGR if key == hover_value else _BORDER_BGR
-            thickness = 3 if key == hover_value else 1
+            thickness = 4 if key == hover_value else 1
             cv2.rectangle(img, rect[:2], rect[2:], border, thickness, cv2.LINE_AA)
             if key == hover_value and dwell_ratio > 0:
                 x1, y1, x2, _ = rect
-                _progress_bar(img, x1 + 12, y1 + 76, x2 - x1 - 24, 10, dwell_ratio, _GREEN_BGR)
+                _progress_bar(img, x1 + 12, y1 + 100, x2 - x1 - 24, 14, dwell_ratio, _GREEN_BGR)
 
         if pointer is not None:
-            cv2.circle(img, pointer, 13, _ACCENT_BGR, 2, cv2.LINE_AA)
-            cv2.circle(img, pointer, 4, _WHITE_BGR, -1, cv2.LINE_AA)
+            cv2.circle(img, pointer, 16, _ACCENT_BGR, 2, cv2.LINE_AA)
+            cv2.circle(img, pointer, 5,  _WHITE_BGR, -1, cv2.LINE_AA)
         return img
 
     # ── Экран калибровки ──────────────────────────────────────────────────────
@@ -363,31 +315,34 @@ class Renderer:
         for i, ln in enumerate(lines):
             _put(d2, ln, (cx + 28, cy + 62 + i * 38), _F_LG_B, _WHITE)
 
-        # Обратный отсчёт / иконка готовности справа
+        # Обратный отсчёт / автостарт
         elapsed = exercise.prepare_elapsed()
-        remaining = max(0.0, PREPARE_SEC - elapsed)
-        if remaining > 0:
-            countdown = str(int(remaining) + 1)
-            clr = _GREEN if remaining > 1.5 else _YELLOW if remaining > 0.5 else _RED
-        else:
-            countdown = "►"
-            clr = _GREEN
-        bbox = d2.textbbox((0, 0), countdown, font=_F_XXL)
-        tw   = bbox[2] - bbox[0]
-        _put(d2, countdown,
-             (cx + cw - tw - 36, cy + ch // 2 - 36), _F_XXL, clr)
+        remaining_prepare = max(0.0, PREPARE_SEC - elapsed)
+        autostart_sec = exercise.autostart_countdown()
 
-        # После минимальной паузы — ждём подтверждения
-        if elapsed >= PREPARE_SEC:
-            _put(d2, "Нажмите  ПРОБЕЛ  или  ENTER  для старта",
+        if remaining_prepare > 0:
+            # Минимальная пауза: большая цифра-обратный отсчёт
+            countdown = str(int(remaining_prepare) + 1)
+            clr = _GREEN if remaining_prepare > 1.5 else _YELLOW if remaining_prepare > 0.5 else _RED
+            bbox = d2.textbbox((0, 0), countdown, font=_F_XXL)
+            tw = bbox[2] - bbox[0]
+            _put(d2, countdown, (cx + cw - tw - 36, cy + ch // 2 - 36), _F_XXL, clr)
+            _put(d2, "Читайте инструкцию...", (cx + 28, cy + ch - 32), _F_SM, _GRAY)
+        elif autostart_sec > 0:
+            # Ждём руку или таймаут автостарта
+            secs = int(autostart_sec) + 1
+            clr = _GREEN if autostart_sec > 1.0 else _YELLOW
+            bbox = d2.textbbox((0, 0), str(secs), font=_F_XXL)
+            tw = bbox[2] - bbox[0]
+            _put(d2, str(secs), (cx + cw - tw - 36, cy + ch // 2 - 36), _F_XXL, clr)
+            _put(d2, "Поднесите руку к камере — начнётся автоматически",
                  (cx + 28, cy + ch - 32), _F_MD_B, _GREEN)
         else:
-            _put(d2, "Начнётся через...",
-                 (cx + 28, cy + ch - 32), _F_SM, _GRAY)
+            _put(d2, "►", (cx + cw - 60, cy + ch // 2 - 36), _F_XXL, _GREEN)
+            _put(d2, "Старт!", (cx + 28, cy + ch - 32), _F_MD_B, _GREEN)
 
         img[:] = _pil_to_bgr(pil2)
 
-        # Прогресс-бар внизу (только во время минимальной паузы)
         ratio = min(1.0, elapsed / PREPARE_SEC)
         bar_color = _ACCENT_BGR if elapsed < PREPARE_SEC else _bgr(_GREEN)
         _progress_bar(img, 24, H - 20, W - 48, 10, ratio, fg=bar_color)
@@ -431,32 +386,48 @@ class Renderer:
         img[:] = _pil_to_bgr(pil)
         _tracking_dot(img, W - 34, 34, tracking.is_valid)
 
-        # Нижняя панель инструкции
-        _panel(img, 0, H - 130, W, H, alpha=0.90, bg=_BG_BGR)
-        pil2 = _bgr_to_pil(img)
-        d2   = ImageDraw.Draw(pil2)
-
-        _put(d2, exercise.instruction, (24, H - 116), _F_MD, _WHITE)
-
         hold  = exercise.current_hold()
         req   = exercise.required_hold_sec
         ratio = min(1.0, hold / req) if req > 0 else 0.0
         bar_c = _GREEN if ratio >= 1.0 else _ACCENT
+        done  = ratio >= 1.0
 
-        # Подсказка позиционирования или счётчик удержания
+        # Вспышка зелёного при завершении
+        if done:
+            flash = img.copy()
+            flash[:] = _bgr(_GREEN)
+            cv2.addWeighted(flash, 0.12, img, 0.88, 0, img)
+
+        # Нижняя панель инструкции
+        _panel(img, 0, H - 160, W, H, alpha=0.92, bg=_BG_BGR)
+        pil2 = _bgr_to_pil(img)
+        d2   = ImageDraw.Draw(pil2)
+
+        _put(d2, exercise.instruction, (24, H - 148), _F_MD_B, _WHITE)
+
+        # Подсказка позиционирования
         hint = exercise.position_hint()
         if hint:
-            _put(d2, f"⚠  {hint}", (24, H - 76), _F_SM, _YELLOW)
+            _put(d2, f"⚠  {hint}", (24, H - 112), _F_MD, _YELLOW)
         else:
-            bar_label = "Выполнено!" if ratio >= 1.0 else f"{hold:.1f} с / {req:.0f} с"
-            _put(d2, "Удержание:", (24, H - 76), _F_SM, _GRAY)
-            _put(d2, bar_label,   (130, H - 76), _F_SM, bar_c)
-
-        _put(d2, "ПРОБЕЛ — следующее   S — пропустить   Q — выйти",
-             (24, H - 18), _F_SM, _GRAY)
+            if done:
+                _put(d2, "✓  Выполнено!", (24, H - 112), _F_LG_B, _GREEN)
+            else:
+                bar_label = f"{hold:.1f} с  /  {req:.0f} с"
+                _put(d2, "Удержание:", (24, H - 112), _F_MD, _GRAY)
+                _put(d2, bar_label, (190, H - 112), _F_MD_B, bar_c)
 
         img[:] = _pil_to_bgr(pil2)
-        _progress_bar(img, 24, H - 52, W - 48, 20, ratio, fg=_bgr(bar_c))
+
+        # Крупный прогресс-бар удержания
+        _progress_bar(img, 24, H - 72, W - 48, 36, ratio, fg=_bgr(bar_c))
+
+        # Маленький текст под баром
+        pil3 = _bgr_to_pil(img)
+        d3 = ImageDraw.Draw(pil3)
+        _put(d3, "Пробел — повторить   Esc — выйти",
+             (24, H - 26), _F_SM, _BORDER)
+        img[:] = _pil_to_bgr(pil3)
 
         if isinstance(exercise, ZoneMovementExercise):
             self._draw_zones(img, exercise)
@@ -555,7 +526,8 @@ class Renderer:
     # ── Экран итогов ──────────────────────────────────────────────────────────
 
     def draw_summary(self, frame_bgr: np.ndarray,
-                     summary: TestSummary) -> np.ndarray:
+                     summary: TestSummary,
+                     autoclose_sec: float = 0.0) -> np.ndarray:
         img = self._base(frame_bgr)
         W, H = self.w, self.h
 
@@ -575,7 +547,7 @@ class Renderer:
         ring_cx = px + 80
         ring_cy = py + 98
         _circle_progress(img, ring_cx, ring_cy, 58,
-                         score / 100, _bgr(score_c), thick=7)
+                         score / 95, _bgr(score_c), thick=7)
 
         pil = _bgr_to_pil(img)
         d   = ImageDraw.Draw(pil)
@@ -590,13 +562,13 @@ class Renderer:
         tw     = bbox[2] - bbox[0]
         _put(d, sc_txt,
              (ring_cx - tw // 2, ring_cy - 24), _F_XL_B, score_c)
-        _put(d, "/ 100",
+        _put(d, "/ 95",
              (ring_cx - 20, ring_cy + 18), _F_SM, _GRAY)
 
         # Итоговый балл (текст рядом с кольцом)
         _put(d, "Итого",
              (px + 164, py + 62), _F_SM, _GRAY)
-        _put(d, f"{score} / 100",
+        _put(d, f"{score} / 95",
              (px + 164, py + 88), _F_LG_B, score_c)
 
         # Блочные баллы — 2 колонки
@@ -609,7 +581,6 @@ class Renderer:
             ("Указательный жест",   bs.point_gesture,    10),
             ("Поворот кисти",       bs.wrist_rotation,   10),
             ("Перемещение по зонам",bs.zone_movement,    15),
-            ("Удержание",           bs.hold_stability,    5),
         ]
         col_w = (pw - 60) // 2
         bx    = px + 24
@@ -663,9 +634,18 @@ class Renderer:
                  (x_pos, y_pos), _F_SM,
                  st_color if r.status == ExerciseStatus.DONE else _GRAY)
 
-        _put(d3, "Нажмите любую клавишу для завершения",
-             (px + 24, py + ph - 28), _F_SM, _BORDER)
+        if autoclose_sec > 0:
+            secs = int(autoclose_sec) + 1
+            close_txt = f"Закроется через {secs} с..."
+        else:
+            close_txt = "Завершено"
+        _put(d3, close_txt, (px + 24, py + ph - 28), _F_SM, _BORDER)
         img[:] = _pil_to_bgr(pil3)
+
+        # Полоска автозакрытия
+        if autoclose_sec > 0:
+            close_ratio = autoclose_sec / 12.0
+            _progress_bar(img, px, py + ph - 6, pw, 6, close_ratio, fg=_ACCENT_BGR)
         return img
 
     # ── Скелет руки ───────────────────────────────────────────────────────────
@@ -675,8 +655,6 @@ class Renderer:
         if not tracking.is_valid or not tracking.landmarks:
             status = "Tracking: no hand"
             color = _RED_BGR
-            if tracking.source == "ultraleap":
-                status = "Ultraleap: place hand above sensor"
             cv2.rectangle(img, (18, self.h - 46), (390, self.h - 14), _PANEL_BGR, -1)
             cv2.rectangle(img, (18, self.h - 46), (390, self.h - 14), _BORDER_BGR, 1)
             cv2.circle(img, (36, self.h - 30), 7, color, -1, cv2.LINE_AA)

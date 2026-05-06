@@ -6,7 +6,7 @@ from src.models import (
 )
 from src.exercises.exercises import (
     OpenPalmExercise, FistExercise, PinchExercise,
-    PointGestureExercise, HoldStillExercise, ZoneMovementExercise,
+    PointGestureExercise, ZoneMovementExercise,
     create_exercises,
 )
 
@@ -74,7 +74,7 @@ def _point_pts() -> list[tuple[float, float]]:
 
 def test_create_exercises_count():
     exs = create_exercises(_calib())
-    assert len(exs) == 8
+    assert len(exs) == 7
 
 
 def test_create_exercises_ids():
@@ -82,7 +82,7 @@ def test_create_exercises_ids():
     assert "open_palm" in ids
     assert "fist" in ids
     assert "pinch" in ids
-    assert "hold_still" in ids
+    assert "zone_movement" in ids
 
 
 # ── Тесты OpenPalmExercise ────────────────────────────────────────────────────
@@ -170,32 +170,6 @@ class TestPointGestureExercise:
         f  = _frame(_fist_pts())
         assert ex._pose_detected(f) is False
 
-
-# ── Тесты HoldStillExercise ───────────────────────────────────────────────────
-
-class TestHoldStillExercise:
-    def test_evaluate_unreliable_no_tracking(self):
-        ex = HoldStillExercise(_calib())
-        ex._prepare_start -= 10
-        ex._prepare_confirmed = True
-        for _ in range(15):
-            ex.feed(TrackingFrame(time.monotonic(), [], False))
-        result = ex.evaluate()
-        assert result.status == ExerciseStatus.UNRELIABLE
-
-    def test_evaluate_stable_hand_no_jitter(self):
-        ex = HoldStillExercise(_calib())
-        ex.required_hold_sec = 0.0
-        ex.min_hold_sec = 0.0
-        ex._prepare_start -= 10   # пропускаем фазу подготовки
-        ex._prepare_confirmed = True
-        pts = _open_palm_pts()
-        for _ in range(40):
-            ex.feed(_frame(pts))
-        result = ex.evaluate()
-        assert result.valid_tracking_ratio > 0.9
-        # Стабильная рука — штраф за jitter должен быть нулём
-        assert result.metrics["jitter"] < 0.01
 
 
 # ── Тесты ZoneMovementExercise ────────────────────────────────────────────────

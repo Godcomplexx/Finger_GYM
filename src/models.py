@@ -96,7 +96,7 @@ class BlockScores:
         return (
             self.tracking_quality + self.open_palm + self.fist +
             self.pinch + self.point_gesture + self.wrist_rotation +
-            self.zone_movement + self.hold_stability
+            self.zone_movement
         )
 
 

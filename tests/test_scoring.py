@@ -32,7 +32,6 @@ def _full_results(vtr: float = 1.0) -> list[ExerciseResult]:
         _result("palm_facing",   10, 10, vtr),
         _result("back_facing",   10, 10, vtr),
         _result("zone_movement", 15, 15, vtr),
-        _result("hold_still",     5,  5, vtr),
     ]
 
 
@@ -65,7 +64,6 @@ class TestComputeBlockScores:
         assert bs.pinch == 15
         assert bs.point_gesture == 10
         assert bs.zone_movement == 15
-        assert bs.hold_stability == 5
 
     def test_wrist_rotation_averages_palm_and_back(self):
         results = [
@@ -76,9 +74,9 @@ class TestComputeBlockScores:
         # (8/10 + 6/10) / 2 * 10 = 7
         assert bs.wrist_rotation == 7
 
-    def test_total_max_is_100(self):
+    def test_total_max_is_95(self):
         bs = compute_block_scores(_full_results(vtr=1.0))
-        assert bs.total() == 100
+        assert bs.total() == 95
 
     def test_zero_scores_with_zero_results(self):
         results = [_result("open_palm", 0, 10, vtr=0.0,
@@ -157,7 +155,7 @@ class TestMakeQualityCategory:
 class TestBuildSummary:
     def test_full_perfect_summary(self):
         s = build_summary(_full_results(vtr=1.0))
-        assert s.total_score == 100
+        assert s.total_score == 95
         assert s.quality_category == QualityCategory.GOOD
         assert s.recommendation.mode == RecommendationMode.STANDARD
 
@@ -166,7 +164,7 @@ class TestBuildSummary:
                    for eid, mx in [
                        ("open_palm", 10), ("fist", 15), ("pinch", 15),
                        ("point_gesture", 10), ("palm_facing", 10),
-                       ("back_facing", 10), ("zone_movement", 15), ("hold_still", 5)
+                       ("back_facing", 10), ("zone_movement", 15),
                    ]]
         s = build_summary(results)
         assert s.quality_category == QualityCategory.UNRELIABLE
@@ -175,7 +173,7 @@ class TestBuildSummary:
     def test_exercise_results_preserved(self):
         results = _full_results()
         s = build_summary(results)
-        assert len(s.exercise_results) == 8
+        assert len(s.exercise_results) == 7
 
     def test_valid_tracking_ratio_stored(self):
         results = _full_results(vtr=0.88)

@@ -9,8 +9,4 @@ def create_tracker(name: str) -> HandTracker:
         from src.tracking.adapter import TrackingAdapter
 
         return TrackingAdapter()
-    if tracker_name == "ultraleap":
-        from src.tracking.ultraleap_adapter import UltraleapTrackingAdapter
-
-        return UltraleapTrackingAdapter()
     raise ValueError(f"Unknown tracker: {name}")

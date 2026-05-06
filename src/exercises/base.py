@@ -8,10 +8,11 @@ from src.processing.metrics import (
 
 MIN_TRACKING_RATIO = 0.65
 PREPARE_SEC        = 3.0   # минимальное время показа инструкции
+AUTOSTART_EXTRA_SEC = 2.0  # после PREPARE_SEC даём ещё N секунд на чтение, потом автостарт
 
 # Допуск на кратковременный пропуск позы (дрожание, моргание трекера)
 # Если поза пропала меньше чем на HOLD_GRACE_SEC — удержание не сбрасывается
-HOLD_GRACE_SEC = 0.35
+HOLD_GRACE_SEC = 0.50  # увеличен до 0.50 для пожилых/больных
 
 
 class BaseExercise(ABC):
@@ -37,28 +38,49 @@ class BaseExercise(ABC):
         self._hold_time:  float = 0.0
         self._lost_start: float | None = None   # когда поза пропала (grace period)
         self._prepare_start: float = time.monotonic()
-        self._prepare_confirmed: bool = False  # оператор нажал Space/Enter
+        self._prepare_confirmed: bool = False
         self._active_start:  float | None = None
         self._done: bool = False
-        self._position_hint: str = ""  # подсказка по позиционированию
+        self._position_hint: str = ""
+        self._hand_detected_at: float | None = None  # для автостарта
 
     # ── Фазы ──────────────────────────────────────────────────────────────────
 
     def is_preparing(self) -> bool:
         """True пока идёт фаза показа инструкции."""
+        if self._prepare_confirmed:
+            return False
         elapsed = time.monotonic() - self._prepare_start
         if elapsed < PREPARE_SEC:
             return True
-        # После минимального времени — ждём подтверждения (Space/Enter)
-        return not self._prepare_confirmed
+        # После минимального времени — автостарт если рука была в кадре хоть секунду,
+        # иначе ждём ещё AUTOSTART_EXTRA_SEC и стартуем в любом случае
+        if self._hand_detected_at is not None:
+            return False
+        return elapsed < PREPARE_SEC + AUTOSTART_EXTRA_SEC
 
     def confirm_start(self):
-        """Оператор/пациент нажал Space или Enter — начать задание."""
+        """Пробел/Enter — немедленный старт после минимальной паузы."""
         if (time.monotonic() - self._prepare_start) >= PREPARE_SEC:
             self._prepare_confirmed = True
 
+    def notify_hand_visible(self, frame: TrackingFrame) -> None:
+        """Вызывается из main loop во время фазы подготовки — для автостарта."""
+        elapsed = time.monotonic() - self._prepare_start
+        if elapsed >= PREPARE_SEC and frame.is_valid and self._hand_detected_at is None:
+            self._hand_detected_at = time.monotonic()
+
     def prepare_elapsed(self) -> float:
         return min(PREPARE_SEC, time.monotonic() - self._prepare_start)
+
+    def autostart_countdown(self) -> float:
+        """Секунд до автостарта после минимальной паузы (0 = уже стартовало)."""
+        elapsed = time.monotonic() - self._prepare_start
+        if elapsed < PREPARE_SEC:
+            return AUTOSTART_EXTRA_SEC
+        if self._hand_detected_at is not None:
+            return 0.0
+        return max(0.0, PREPARE_SEC + AUTOSTART_EXTRA_SEC - elapsed)
 
     def _ensure_active_started(self):
         if self._active_start is None:
