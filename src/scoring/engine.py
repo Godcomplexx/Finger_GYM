@@ -4,6 +4,7 @@ from src.models import (
     QualityCategory, Recommendation, RecommendationMode, TestSummary,
 )
 from src.processing.metrics import valid_tracking_ratio
+from src.scoring.icf import build_icf_profile
 
 # Максимальные баллы блоков из методики
 MAX_OPEN_PALM = 10
@@ -111,11 +112,13 @@ def build_summary(results: list[ExerciseResult]) -> TestSummary:
     avg_vtr = compute_valid_tracking_ratio(results)
     quality_category = make_quality_category(total, avg_vtr)
     recommendation = make_recommendation(total, avg_vtr)
+    icf_codes = build_icf_profile(block_scores, total)
     return TestSummary(
         valid_tracking_ratio=round(avg_vtr, 3),
         block_scores=block_scores,
         total_score=total,
         quality_category=quality_category,
         recommendation=recommendation,
+        icf_codes=icf_codes,
         exercise_results=results,
     )

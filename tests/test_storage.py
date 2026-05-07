@@ -86,6 +86,7 @@ class TestSaveSession:
         assert "exercises" in d
         assert "totalScore" in d
         assert "qualityCategory" in d
+        assert "icfCodes" in d
         assert "events" in d
         assert "recommendation" in d
 

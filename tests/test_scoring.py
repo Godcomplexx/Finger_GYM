@@ -5,6 +5,10 @@ from src.scoring.engine import (
     compute_block_scores, compute_valid_tracking_ratio,
     make_quality_category, make_recommendation, build_summary,
 )
+from src.scoring.icf import (
+    problem_percent_from_score,
+    qualifier_from_problem_percent,
+)
 
 
 # ── Хелперы ───────────────────────────────────────────────────────────────────
@@ -152,6 +156,31 @@ class TestMakeQualityCategory:
         assert make_quality_category(39, 0.90) == QualityCategory.POOR
 
 
+class TestIcfScale:
+    @pytest.mark.parametrize(
+        ("percent", "qualifier"),
+        [
+            (0, 0),
+            (4, 0),
+            (5, 1),
+            (24, 1),
+            (25, 2),
+            (49, 2),
+            (50, 3),
+            (95, 3),
+            (96, 4),
+            (100, 4),
+        ],
+    )
+    def test_problem_percent_to_qualifier(self, percent, qualifier):
+        assert qualifier_from_problem_percent(percent) == qualifier
+
+    def test_app_score_is_inverted_to_problem_percent(self):
+        assert problem_percent_from_score(80, 80) == 0
+        assert problem_percent_from_score(40, 80) == 50
+        assert problem_percent_from_score(0, 80) == 100
+
+
 class TestBuildSummary:
     def test_full_perfect_summary(self):
         s = build_summary(_full_results(vtr=1.0))
@@ -180,3 +209,11 @@ class TestBuildSummary:
         results = _full_results(vtr=0.88)
         s = build_summary(results)
         assert abs(s.valid_tracking_ratio - 0.88) < 0.01
+
+    def test_icf_profile_stored(self):
+        s = build_summary(_full_results(vtr=1.0))
+        codes = {item.code: item for item in s.icf_codes}
+        assert codes["s110"].formatted_code == "s110.8"
+        assert codes["b7302"].formatted_code == "b7302.0"
+        assert codes["d520"].formatted_code == "d520.0"
+        assert codes["e310"].formatted_code == "e310.8"

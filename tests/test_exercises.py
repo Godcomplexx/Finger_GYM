@@ -70,6 +70,10 @@ def _point_pts() -> list[tuple[float, float]]:
     return pts
 
 
+def _shift_pts(points: list[tuple[float, float]], dx: float) -> list[tuple[float, float]]:
+    return [(x + dx, y) for x, y in points]
+
+
 # ── Тесты create_exercises ────────────────────────────────────────────────────
 
 def test_create_exercises_count():
@@ -120,6 +124,20 @@ class TestOpenPalmExercise:
             ex.feed(f)
         result = ex.evaluate()
         assert result.valid_tracking_ratio > 0.6
+
+    def test_entry_motion_is_not_recorded_before_stable_arm(self):
+        ex = OpenPalmExercise(_calib())
+        ex._prepare_start -= 10
+        ex._prepare_confirmed = True
+        points = _open_palm_pts()
+
+        for dx in [0.00, 0.06, -0.05, 0.04, -0.04, 0.03, -0.03]:
+            ex.feed(_frame(_shift_pts(points, dx)))
+        assert len(ex._frames) == 0
+
+        for _ in range(8):
+            ex.feed(_frame(points))
+        assert len(ex._frames) == 1
 
 
 # ── Тесты FistExercise ────────────────────────────────────────────────────────

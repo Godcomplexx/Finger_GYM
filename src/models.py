@@ -101,6 +101,18 @@ class BlockScores:
 
 
 @dataclass
+class IcfCodeAssessment:
+    code: str
+    domain: str
+    qualifier: int
+    formatted_code: str
+    label: str
+    problem_percent: int | None = None
+    source: str = "not_measured"
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Recommendation:
     mode: RecommendationMode
     label: str
@@ -123,6 +135,7 @@ class TestSummary:
     total_score: int
     quality_category: QualityCategory
     recommendation: Recommendation
+    icf_codes: list[IcfCodeAssessment] = field(default_factory=list)
     exercise_results: list[ExerciseResult] = field(default_factory=list)
 
 

@@ -618,6 +618,14 @@ def run():
             if pdf_path:
                 print(f"[OK] {pdf_path}")
             print(f"     Балл: {summary.total_score}/80  |  {summary.recommendation.label}")
+            if summary.icf_codes:
+                icf_text = []
+                for item in summary.icf_codes:
+                    if item.problem_percent is None:
+                        icf_text.append(item.formatted_code)
+                    else:
+                        icf_text.append(f"{item.formatted_code} ({item.problem_percent}%)")
+                print(f"     МКФ: {', '.join(icf_text)}")
 
             SUMMARY_SHOW_SEC = 12.0
             summary_start = time.monotonic()

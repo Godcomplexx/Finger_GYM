@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
-from src.models import TrackingFrame, CalibrationProfile, ExerciseResult, ExerciseStatus
+from src.models import TrackingFrame, CalibrationProfile, ExerciseResult, ExerciseStatus, Point2D
 from src.processing.metrics import (
     valid_tracking_ratio, compute_palm_center, hand_jitter, hand_in_position,
 )
@@ -13,6 +13,10 @@ AUTOSTART_EXTRA_SEC = 2.0  # после PREPARE_SEC даём ещё N секун
 # Допуск на кратковременный пропуск позы (дрожание, моргание трекера)
 # Если поза пропала меньше чем на HOLD_GRACE_SEC — удержание не сбрасывается
 HOLD_GRACE_SEC = 0.50  # увеличен до 0.50 для пожилых/больных
+
+
+ARM_STABLE_FRAMES = 8
+ARM_MAX_CENTER_SHIFT = 0.025
 
 
 class BaseExercise(ABC):
@@ -44,6 +48,9 @@ class BaseExercise(ABC):
         self._done: bool = False
         self._position_hint: str = ""
         self._hand_detected_at: float | None = None  # для автостарта
+        self._active_armed: bool = False
+        self._arm_stable_frames: int = 0
+        self._arm_last_center: Point2D | None = None
 
     # ── Фазы ──────────────────────────────────────────────────────────────────
 
@@ -87,17 +94,44 @@ class BaseExercise(ABC):
         if self._active_start is None:
             self._active_start = time.monotonic()
 
+    def _ready_to_record(self, frame: TrackingFrame, in_position: bool) -> bool:
+        if self._active_armed:
+            return True
+        if not frame.is_valid or not in_position:
+            self._arm_stable_frames = 0
+            self._arm_last_center = None
+            return False
+
+        center = compute_palm_center(frame)
+        if (
+            self._arm_last_center is None
+            or center.distance_to(self._arm_last_center) <= ARM_MAX_CENTER_SHIFT
+        ):
+            self._arm_stable_frames += 1
+        else:
+            self._arm_stable_frames = 1
+        self._arm_last_center = center
+
+        if self._arm_stable_frames >= ARM_STABLE_FRAMES:
+            self._active_armed = True
+            self._ensure_active_started()
+            return True
+        return False
+
     # ── Приём кадров ──────────────────────────────────────────────────────────
 
     def feed(self, frame: TrackingFrame):
         if self._done or self.is_preparing():
             return
-        self._ensure_active_started()
-        self._frames.append(frame)
 
         # Проверка позиционирования
         in_pos, hint = hand_in_position(frame)
         self._position_hint = hint
+        if not self._ready_to_record(frame, in_pos):
+            return
+
+        self._ensure_active_started()
+        self._frames.append(frame)
 
         # Считаем удержание только если рука в корректной позиции
         self._update_hold(frame, in_pos)

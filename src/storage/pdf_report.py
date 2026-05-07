@@ -82,6 +82,16 @@ def save_pdf_report(session: TestSession, json_path: str) -> str | None:
         draw.text((x + 260, y), str(value), font=text_f, fill=(35, 35, 35))
         y += line
 
+    if summary.icf_codes:
+        y += 24
+        draw.text((x, y), "ICF / MKF", font=h1_f, fill=(20, 20, 20))
+        y += 44
+        for item in summary.icf_codes:
+            percent = "" if item.problem_percent is None else f", {item.problem_percent}%"
+            text = f"{item.formatted_code}  {item.label}{percent}  [{item.source}]"
+            draw.text((x, y), text, font=text_f, fill=(35, 35, 35))
+            y += line
+
     y += 24
     draw.text((x, y), "Итог", font=h1_f, fill=(20, 20, 20))
     y += 44

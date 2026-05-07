@@ -939,6 +939,18 @@ class Renderer:
         _put(d, f"{score} / {max_total}",
              (px + 150, py + 138), _F_LG_B, score_c)
 
+        if summary.icf_codes:
+            _put(d, "МКФ", (px + 360, py + 112), _F_SM, _GRAY)
+            icf_x = px + 360
+            icf_y = py + 138
+            for item in summary.icf_codes[:4]:
+                if item.problem_percent is None:
+                    value = item.formatted_code
+                else:
+                    value = f"{item.formatted_code} ({item.problem_percent}%)"
+                _put(d, value, (icf_x, icf_y), _F_SM, _WHITE)
+                icf_y += 24
+
         # Блочные баллы — 2 колонки
         bs = summary.block_scores
         blocks = [

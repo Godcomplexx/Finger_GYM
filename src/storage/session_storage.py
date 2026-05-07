@@ -84,6 +84,19 @@ def save_session(session: TestSession) -> str:
         } if summary else None,
         "totalScore": summary.total_score if summary else None,
         "qualityCategory": summary.quality_category.value if summary else None,
+        "icfCodes": [
+            {
+                "code": item.code,
+                "domain": item.domain,
+                "qualifier": item.qualifier,
+                "formattedCode": item.formatted_code,
+                "label": item.label,
+                "problemPercent": item.problem_percent,
+                "source": item.source,
+                "notes": item.notes,
+            }
+            for item in (summary.icf_codes if summary else [])
+        ] if summary else None,
         "requiresSpecialistConfirmation": summary is not None,
         "technicalValidity": {
             "isInterpretable": bool(summary and summary.valid_tracking_ratio >= 0.65),

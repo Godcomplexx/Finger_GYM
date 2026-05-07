@@ -252,6 +252,8 @@ class ZoneMovementExercise(BaseExercise):
 
     def feed(self, frame: TrackingFrame):
         super().feed(frame)
+        if not self._active_armed:
+            return
         if not frame.is_valid or self._zone_index >= len(ZONES):
             return
         center = compute_palm_center(frame)
@@ -439,4 +441,3 @@ EXERCISE_ORDER = [
 
 def create_exercises(calibration: CalibrationProfile) -> list[BaseExercise]:
     return [cls(calibration) for cls in EXERCISE_ORDER]
-
