@@ -74,7 +74,6 @@ def save_session(session: TestSession) -> str:
             for r in (summary.exercise_results if summary else [])
         ],
         "blockScores": {
-            "trackingQuality": summary.block_scores.tracking_quality,
             "openPalm": summary.block_scores.open_palm,
             "fist": summary.block_scores.fist,
             "pinch": summary.block_scores.pinch,

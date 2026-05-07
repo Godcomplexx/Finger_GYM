@@ -6,7 +6,6 @@ from src.models import (
 from src.processing.metrics import valid_tracking_ratio
 
 # Максимальные баллы блоков из методики
-MAX_TRACKING_QUALITY = 20
 MAX_OPEN_PALM = 10
 MAX_FIST = 15
 MAX_PINCH = 15
@@ -14,26 +13,19 @@ MAX_POINT_GESTURE = 10
 MAX_WRIST_ROTATION = 10   # среднее palm_facing + back_facing
 MAX_ZONE_MOVEMENT = 15
 MAX_HOLD_STABILITY = 5
-
-UNRELIABLE_THRESHOLD = 0.65
-
+MAX_TOTAL_SCORE = 80
 
 def make_quality_category(total_score: int, avg_vtr: float) -> QualityCategory:
-    if avg_vtr < UNRELIABLE_THRESHOLD:
-        return QualityCategory.UNRELIABLE
-    if total_score >= 75:
+    if total_score >= round(MAX_TOTAL_SCORE * 0.80):
         return QualityCategory.GOOD
-    if total_score >= 50:
+    if total_score >= round(MAX_TOTAL_SCORE * 0.50):
         return QualityCategory.MEDIUM
     return QualityCategory.POOR
 
 
 def _tracking_quality_score(results: list[ExerciseResult]) -> int:
-    """Блок 'Качество трекинга' (0–20): среднее validTrackingRatio по всем заданиям."""
-    if not results:
-        return 0
-    avg_vtr = sum(r.valid_tracking_ratio for r in results) / len(results)
-    return round(avg_vtr * MAX_TRACKING_QUALITY)
+    """Tracking quality is technical only and does not affect patient score."""
+    return 0
 
 
 def _find(results: list[ExerciseResult], exercise_id: str) -> ExerciseResult | None:
@@ -79,22 +71,13 @@ def compute_valid_tracking_ratio(results: list[ExerciseResult]) -> float:
 
 
 def make_recommendation(total_score: int, avg_vtr: float) -> Recommendation:
-    if avg_vtr < UNRELIABLE_THRESHOLD:
-        return Recommendation(
-            mode=RecommendationMode.REPEAT,
-            label="Повторите тестирование",
-            notes=[
-                "Результат технически ненадёжен: низкое качество трекинга",
-                "Проверьте освещение, положение руки и фон",
-            ],
-        )
-    if total_score >= 80:
+    if total_score >= round(MAX_TOTAL_SCORE * 0.80):
         return Recommendation(
             mode=RecommendationMode.STANDARD,
             label="Стандартный VR-сценарий",
             notes=["Функциональная готовность кисти высокая"],
         )
-    if total_score >= 60:
+    if total_score >= round(MAX_TOTAL_SCORE * 0.60):
         return Recommendation(
             mode=RecommendationMode.ADAPTED,
             label="Адаптированный режим",
@@ -103,7 +86,7 @@ def make_recommendation(total_score: int, avg_vtr: float) -> Recommendation:
                 "Рекомендуются увеличенные зоны взаимодействия и мягкие допуски",
             ],
         )
-    if total_score >= 40:
+    if total_score >= round(MAX_TOTAL_SCORE * 0.40):
         return Recommendation(
             mode=RecommendationMode.TRAINING,
             label="Тренировочный режим",

@@ -14,7 +14,7 @@ from src.app_info import tracking_model_sha256
 
 # Путь к модели относительно корня проекта
 _HERE = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(_HERE, "..", "..", "hand_landmarker.task")
+MODEL_PATH = os.path.abspath(os.path.join(_HERE, "..", "..", "hand_landmarker.task"))
 
 # Индексы ключевых точек MediaPipe Hands
 WRIST = 0
@@ -45,14 +45,17 @@ class TrackingAdapter:
     def __init__(self, model_path: str = MODEL_PATH,
                  min_detection_confidence: float = 0.6,
                  min_tracking_confidence: float = 0.5):
+        model_path = os.path.abspath(model_path)
         if not os.path.exists(model_path):
             raise FileNotFoundError(
                 f"Модель не найдена: {model_path}\n"
                 "Скачайте: https://storage.googleapis.com/mediapipe-models/"
                 "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
             )
+        with open(model_path, "rb") as model_file:
+            model_asset_buffer = model_file.read()
         options = HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=model_path),
+            base_options=BaseOptions(model_asset_buffer=model_asset_buffer),
             running_mode=RunningMode.VIDEO,
             num_hands=1,
             min_hand_detection_confidence=min_detection_confidence,
@@ -60,7 +63,7 @@ class TrackingAdapter:
             min_tracking_confidence=min_tracking_confidence,
         )
         self._landmarker = HandLandmarker.create_from_options(options)
-        self.model_path = os.path.abspath(model_path)
+        self.model_path = model_path
         self.model_sha256 = tracking_model_sha256()
         self._frame_ts_ms: int = 0
 

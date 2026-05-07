@@ -21,6 +21,7 @@ from src.processing.calibration import CalibrationCollector
 from src.exercises.exercises import create_exercises, EXERCISE_ORDER
 from src.scoring.engine import build_summary
 from src.storage.session_storage import save_session
+from src.storage.pdf_report import save_pdf_report
 from src.presentation.renderer import Renderer
 from src.audio import (
     sound_exercise_done, sound_zone_hit, sound_calibration_ok,
@@ -29,6 +30,7 @@ from src.audio import (
 
 WINDOW = "Finger Gym"
 DWELL_SECONDS = 1.1
+RESULT_DWELL_SECONDS = 1.8
 
 _mouse_state = {"pos": (-1, -1), "click": None}
 
@@ -53,12 +55,19 @@ def point_in_rect(point: tuple[int, int], rect: tuple[int, int, int, int]) -> bo
 
 
 def hand_button_rects(width: int, height: int) -> dict[Hand, tuple[int, int, int, int]]:
-    cw, ch = 560, 300
+    cw = min(1200, width - 60)
+    ch = min(420, height - 120)
     cx = (width - cw) // 2
     cy = (height - ch) // 2
+    gap = 70
+    btn_top = cy + 118
+    btn_bottom = cy + ch - 34
+    btn_w = (cw - 56 - gap) // 2
+    left_x1 = cx + 28
+    right_x1 = left_x1 + btn_w + gap
     return {
-        Hand.RIGHT: (cx + 28, cy + 78, cx + cw // 2 - 18, cy + 178),
-        Hand.LEFT: (cx + cw // 2 + 18, cy + 78, cx + cw - 28, cy + 178),
+        Hand.LEFT: (left_x1, btn_top, left_x1 + btn_w, btn_bottom),
+        Hand.RIGHT: (right_x1, btn_top, right_x1 + btn_w, btn_bottom),
     }
 
 
@@ -76,6 +85,66 @@ def hand_pointer(frame, width: int, height: int) -> tuple[int, int] | None:
         return None
     tip = frame.landmarks[8]
     return int(tip.x * width), int(tip.y * height)
+
+
+def wait_exercise_result_action(
+    cap: cv2.VideoCapture,
+    tracker,
+    renderer: Renderer,
+    exercise,
+    result,
+    exercise_num: int,
+    total_exercises: int,
+    width: int,
+    height: int,
+) -> str:
+    dwell_target: str | None = None
+    dwell_started = 0.0
+    while True:
+        ok, bgr = read_frame(cap, width, height)
+        if not ok:
+            continue
+        frame = safe_process(tracker, bgr)
+        pointer = hand_pointer(frame, width, height)
+        rects = {
+            "repeat": renderer.repeat_button_rect(),
+            "next": renderer.next_button_rect(),
+        }
+        click_target = hit_target(consume_mouse_click(), rects)
+        pointer_target = hit_target(pointer, rects)
+        now = time.monotonic()
+        if pointer_target is not None:
+            if pointer_target != dwell_target:
+                dwell_target = pointer_target
+                dwell_started = now
+            dwell_ratio = min(1.0, (now - dwell_started) / RESULT_DWELL_SECONDS)
+        else:
+            dwell_target = None
+            dwell_started = 0.0
+            dwell_ratio = 0.0
+        img = renderer.draw_exercise_result(
+            bgr,
+            exercise,
+            result,
+            exercise_num,
+            total_exercises,
+            pointer=pointer,
+            hover_target=dwell_target,
+            dwell_ratio=dwell_ratio,
+        )
+        img = renderer.draw_tracking_overlay(img, frame)
+        key = show(img)
+
+        if should_quit(key):
+            return "quit"
+        if key in (13, 10) or click_target == "next" or (
+            dwell_target == "next" and dwell_ratio >= 1.0
+        ):
+            return "next"
+        if key in (ord(" "), ord("r"), ord("R")) or click_target == "repeat" or (
+            dwell_target == "repeat" and dwell_ratio >= 1.0
+        ):
+            return "repeat"
 
 
 def parse_args():
@@ -141,6 +210,32 @@ def cleanup(cap: cv2.VideoCapture | None):
     cv2.destroyAllWindows()
 
 
+def get_screen_size(default_width: int, default_height: int) -> tuple[int, int]:
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        root.destroy()
+        return width, height
+    except Exception:
+        return default_width, default_height
+
+
+def configure_main_window(width: int, height: int) -> None:
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    screen_w, screen_h = get_screen_size(width, height)
+    available_w = max(640, screen_w - 40)
+    available_h = max(480, screen_h - 100)
+    scale = min(available_w / width, available_h / height)
+    window_w = int(width * scale)
+    window_h = int(height * scale)
+    cv2.resizeWindow(WINDOW, window_w, window_h)
+    cv2.moveWindow(WINDOW, max(0, (screen_w - window_w) // 2), 20)
+
+
 
 def show_startup_error(args: argparse.Namespace, renderer: Renderer, message: str) -> None:
     blank = np.zeros((args.height, args.width, 3), dtype=np.uint8)
@@ -153,8 +248,7 @@ def run():
     args = parse_args()
     cap: cv2.VideoCapture | None = None
 
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-    cv2.setWindowProperty(WINDOW, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    configure_main_window(args.width, args.height)
     cv2.setMouseCallback(WINDOW, on_mouse)
 
     renderer = Renderer(args.width, args.height, debug=args.debug)
@@ -361,19 +455,60 @@ def run():
         results   = []
         ex_index  = 0
         total_ex  = len(exercises)
+        active_exercise_id: int | None = None
+        prepare_countdown_started: float | None = None
+        prepare_dwell_started = 0.0
 
         while ex_index < total_ex:
             exercise = exercises[ex_index]
+            if id(exercise) != active_exercise_id:
+                active_exercise_id = id(exercise)
+                prepare_countdown_started = None
+                prepare_dwell_started = 0.0
+                exercise._prepare_start = time.monotonic()
+                exercise._prepare_confirmed = False
+                exercise._hand_detected_at = None
             ok, bgr = read_frame(cap, args.width, args.height)
             if not ok:
                 continue
             frame = safe_process(tracker, bgr)
 
-            # ── Фаза подготовки: показываем инструкцию, автостарт ────────────
-            if exercise.is_preparing():
-                exercise.notify_hand_visible(frame)  # для автостарта по руке
-                img = renderer.draw_prepare(bgr, exercise,
-                                            ex_index + 1, total_ex)
+            if exercise.is_preparing() or prepare_countdown_started is not None:
+                now = time.monotonic()
+                pointer = hand_pointer(frame, args.width, args.height)
+                start_rects = {"start": renderer.start_button_rect()}
+                click_target = hit_target(consume_mouse_click(), start_rects)
+                pointer_target = hit_target(pointer, start_rects)
+                hover_start = False
+                dwell_ratio = 0.0
+
+                if prepare_countdown_started is None:
+                    exercise._prepare_start = now
+                    if pointer_target == "start":
+                        hover_start = True
+                        if prepare_dwell_started == 0.0:
+                            prepare_dwell_started = now
+                        dwell_ratio = min(1.0, (now - prepare_dwell_started) / RESULT_DWELL_SECONDS)
+                    else:
+                        prepare_dwell_started = 0.0
+                    countdown_remaining = None
+                else:
+                    countdown_remaining = max(0.0, 3.0 - (now - prepare_countdown_started))
+                    if countdown_remaining <= 0:
+                        exercise._prepare_confirmed = True
+                        prepare_countdown_started = None
+                        log_event(session, "exercise_started", "Exercise started", details={
+                            "exerciseId": exercise.exercise_id,
+                        })
+                        continue
+
+                img = renderer.draw_prepare(
+                    bgr, exercise, ex_index + 1, total_ex,
+                    pointer=pointer,
+                    hover_start=hover_start,
+                    dwell_ratio=dwell_ratio,
+                    countdown_remaining=countdown_remaining,
+                )
                 img = renderer.draw_tracking_overlay(img, frame)
                 key = show(img)
                 if should_quit(key):
@@ -381,23 +516,28 @@ def run():
                 if key in (ord('s'), ord('S')):
                     result = exercise.evaluate()
                     result.notes.append("Пропущено оператором")
-                    results.append(result)
                     log_event(session, "exercise_skipped", "Exercise skipped by operator", details={
                         "exerciseId": exercise.exercise_id,
                     })
-                    ex_index += 1
-                elif key in (ord(' '), 13):
-                    exercise.confirm_start()
-                    log_event(session, "exercise_started", "Exercise started", details={
-                        "exerciseId": exercise.exercise_id,
-                    })
-                else:
-                    # Автостарт: is_preparing вернул False на следующей итерации
-                    if not exercise.is_preparing():
-                        log_event(session, "exercise_started", "Exercise started", details={
-                            "exerciseId": exercise.exercise_id,
-                        })
-                continue  # ждём конца фазы подготовки
+                    action = wait_exercise_result_action(
+                        cap, tracker, renderer, exercise, result,
+                        ex_index + 1, total_ex, args.width, args.height,
+                    )
+                    if action == "quit":
+                        break
+                    if action == "repeat":
+                        exercises[ex_index] = EXERCISE_ORDER[ex_index](calibration)
+                    else:
+                        results.append(result)
+                        ex_index += 1
+                elif (
+                    key in (ord(' '), 13)
+                    or click_target == "start"
+                    or (pointer_target == "start" and dwell_ratio >= 1.0)
+                ):
+                    prepare_countdown_started = time.monotonic()
+                    prepare_dwell_started = 0.0
+                continue
 
             # ── Активная фаза: принимаем кадры и считаем удержание ───────────
             was_hand_lost = not frame.is_valid and exercise.is_hand_lost()
@@ -425,16 +565,24 @@ def run():
             if key in (ord('s'), ord('S')):
                 result = exercise.evaluate()
                 result.notes.append("Пропущено оператором")
-                results.append(result)
                 log_event(session, "exercise_skipped", "Exercise skipped by operator", details={
                     "exerciseId": exercise.exercise_id,
                 })
-                ex_index += 1
+                action = wait_exercise_result_action(
+                    cap, tracker, renderer, exercise, result,
+                    ex_index + 1, total_ex, args.width, args.height,
+                )
+                if action == "quit":
+                    break
+                if action == "repeat":
+                    exercises[ex_index] = EXERCISE_ORDER[ex_index](calibration)
+                else:
+                    results.append(result)
+                    ex_index += 1
                 continue
 
-            if exercise.is_complete() or exercise.is_timeout():
+            if exercise.is_complete():
                 result = exercise.evaluate()
-                results.append(result)
                 sound_exercise_done()
                 log_event(session, "exercise_completed", "Exercise completed", details={
                     "exerciseId": exercise.exercise_id,
@@ -442,7 +590,17 @@ def run():
                     "score": result.score,
                     "validTrackingRatio": round(result.valid_tracking_ratio, 3),
                 })
-                ex_index += 1
+                action = wait_exercise_result_action(
+                    cap, tracker, renderer, exercise, result,
+                    ex_index + 1, total_ex, args.width, args.height,
+                )
+                if action == "quit":
+                    break
+                if action == "repeat":
+                    exercises[ex_index] = EXERCISE_ORDER[ex_index](calibration)
+                else:
+                    results.append(result)
+                    ex_index += 1
 
         # ── Шаг 5: итоги ──────────────────────────────────────────────────────
         if results:
@@ -454,9 +612,12 @@ def run():
                 "recommendation": summary.recommendation.mode.value,
             })
             filepath        = save_session(session)
+            pdf_path        = save_pdf_report(session, filepath)
             sound_session_complete()
             print(f"[OK] {filepath}")
-            print(f"     Балл: {summary.total_score}/100  |  {summary.recommendation.label}")
+            if pdf_path:
+                print(f"[OK] {pdf_path}")
+            print(f"     Балл: {summary.total_score}/80  |  {summary.recommendation.label}")
 
             SUMMARY_SHOW_SEC = 12.0
             summary_start = time.monotonic()

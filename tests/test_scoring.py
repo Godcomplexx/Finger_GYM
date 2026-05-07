@@ -32,6 +32,7 @@ def _full_results(vtr: float = 1.0) -> list[ExerciseResult]:
         _result("palm_facing",   10, 10, vtr),
         _result("back_facing",   10, 10, vtr),
         _result("zone_movement", 15, 15, vtr),
+        _result("hold_still",     5,  5, vtr),
     ]
 
 
@@ -57,8 +58,7 @@ class TestComputeVTR:
 class TestComputeBlockScores:
     def test_max_score_with_perfect_results(self):
         bs = compute_block_scores(_full_results(vtr=1.0))
-        # tracking_quality = round(1.0 * 20) = 20
-        assert bs.tracking_quality == 20
+        assert bs.tracking_quality == 0
         assert bs.open_palm == 10
         assert bs.fist == 15
         assert bs.pinch == 15
@@ -74,9 +74,9 @@ class TestComputeBlockScores:
         # (8/10 + 6/10) / 2 * 10 = 7
         assert bs.wrist_rotation == 7
 
-    def test_total_max_is_95(self):
+    def test_total_max_is_80(self):
         bs = compute_block_scores(_full_results(vtr=1.0))
-        assert bs.total() == 95
+        assert bs.total() == 80
 
     def test_zero_scores_with_zero_results(self):
         results = [_result("open_palm", 0, 10, vtr=0.0,
@@ -95,18 +95,18 @@ class TestComputeBlockScores:
 class TestMakeRecommendation:
     def test_unreliable_tracking(self):
         r = make_recommendation(90, avg_vtr=0.60)
-        assert r.mode == RecommendationMode.REPEAT
+        assert r.mode == RecommendationMode.STANDARD
 
     def test_standard_80_plus(self):
-        r = make_recommendation(85, avg_vtr=0.90)
+        r = make_recommendation(64, avg_vtr=0.90)
         assert r.mode == RecommendationMode.STANDARD
 
     def test_adapted_60_to_79(self):
-        r = make_recommendation(70, avg_vtr=0.90)
+        r = make_recommendation(48, avg_vtr=0.90)
         assert r.mode == RecommendationMode.ADAPTED
 
     def test_training_40_to_59(self):
-        r = make_recommendation(50, avg_vtr=0.90)
+        r = make_recommendation(32, avg_vtr=0.90)
         assert r.mode == RecommendationMode.TRAINING
 
     def test_individual_below_40(self):
@@ -114,20 +114,20 @@ class TestMakeRecommendation:
         assert r.mode == RecommendationMode.INDIVIDUAL
 
     def test_boundary_80_is_standard(self):
-        r = make_recommendation(80, avg_vtr=0.90)
+        r = make_recommendation(64, avg_vtr=0.90)
         assert r.mode == RecommendationMode.STANDARD
 
     def test_boundary_60_is_adapted(self):
-        r = make_recommendation(60, avg_vtr=0.90)
+        r = make_recommendation(48, avg_vtr=0.90)
         assert r.mode == RecommendationMode.ADAPTED
 
     def test_boundary_40_is_training(self):
-        r = make_recommendation(40, avg_vtr=0.90)
+        r = make_recommendation(32, avg_vtr=0.90)
         assert r.mode == RecommendationMode.TRAINING
 
     def test_vtr_threshold_exactly_065(self):
         # 0.65 — граница: равно или выше → не REPEAT
-        r = make_recommendation(80, avg_vtr=0.65)
+        r = make_recommendation(64, avg_vtr=0.65)
         assert r.mode == RecommendationMode.STANDARD
 
     def test_recommendation_has_notes(self):
@@ -140,22 +140,22 @@ class TestMakeRecommendation:
 
 class TestMakeQualityCategory:
     def test_unreliable_tracking(self):
-        assert make_quality_category(100, 0.64) == QualityCategory.UNRELIABLE
+        assert make_quality_category(80, 0.64) == QualityCategory.GOOD
 
     def test_good(self):
-        assert make_quality_category(75, 0.90) == QualityCategory.GOOD
+        assert make_quality_category(64, 0.90) == QualityCategory.GOOD
 
     def test_medium(self):
-        assert make_quality_category(50, 0.90) == QualityCategory.MEDIUM
+        assert make_quality_category(40, 0.90) == QualityCategory.MEDIUM
 
     def test_poor(self):
-        assert make_quality_category(49, 0.90) == QualityCategory.POOR
+        assert make_quality_category(39, 0.90) == QualityCategory.POOR
 
 
 class TestBuildSummary:
     def test_full_perfect_summary(self):
         s = build_summary(_full_results(vtr=1.0))
-        assert s.total_score == 95
+        assert s.total_score == 80
         assert s.quality_category == QualityCategory.GOOD
         assert s.recommendation.mode == RecommendationMode.STANDARD
 
@@ -165,15 +165,16 @@ class TestBuildSummary:
                        ("open_palm", 10), ("fist", 15), ("pinch", 15),
                        ("point_gesture", 10), ("palm_facing", 10),
                        ("back_facing", 10), ("zone_movement", 15),
+                       ("hold_still", 5),
                    ]]
         s = build_summary(results)
-        assert s.quality_category == QualityCategory.UNRELIABLE
-        assert s.recommendation.mode == RecommendationMode.REPEAT
+        assert s.quality_category == QualityCategory.POOR
+        assert s.recommendation.mode == RecommendationMode.INDIVIDUAL
 
     def test_exercise_results_preserved(self):
         results = _full_results()
         s = build_summary(results)
-        assert len(s.exercise_results) == 7
+        assert len(s.exercise_results) == 8
 
     def test_valid_tracking_ratio_stored(self):
         results = _full_results(vtr=0.88)

@@ -94,9 +94,9 @@ class BlockScores:
 
     def total(self) -> int:
         return (
-            self.tracking_quality + self.open_palm + self.fist +
-            self.pinch + self.point_gesture + self.wrist_rotation +
-            self.zone_movement
+            self.open_palm + self.fist + self.pinch +
+            self.point_gesture + self.wrist_rotation +
+            self.zone_movement + self.hold_stability
         )
 
 

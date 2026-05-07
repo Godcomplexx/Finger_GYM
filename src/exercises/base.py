@@ -26,9 +26,10 @@ class BaseExercise(ABC):
 
     exercise_id: str = ""
     instruction: str = ""
+    details: list[str] = []
     max_score: int = 10
-    required_hold_sec: float = 2.5   # идеальное удержание
-    min_hold_sec:      float = 1.5   # минимально допустимое
+    required_hold_sec: float = 5.0   # идеальное удержание
+    min_hold_sec:      float = 2.5   # минимально допустимое
     max_duration_sec:  float = 20.0  # таймаут ACTIVE-фазы
 
     def __init__(self, calibration: CalibrationProfile):
@@ -135,9 +136,7 @@ class BaseExercise(ABC):
         return self._hold_time >= self.required_hold_sec
 
     def is_timeout(self) -> bool:
-        if self._active_start is None:
-            return False
-        return (time.monotonic() - self._active_start) >= self.max_duration_sec
+        return False
 
     def elapsed(self) -> float:
         if self._active_start is None:
@@ -170,6 +169,12 @@ class BaseExercise(ABC):
         vtr     = valid_tracking_ratio(self._frames)
         centers = [compute_palm_center(f) for f in self._frames if f.is_valid]
         jitter  = hand_jitter(centers)
+        pose_ok_frames = 0
+        for frame in self._frames:
+            in_pos, _ = hand_in_position(frame)
+            if frame.is_valid and in_pos and self._pose_detected(frame):
+                pose_ok_frames += 1
+        pose_ok_ratio = pose_ok_frames / len(self._frames) if self._frames else 0.0
 
         if vtr < MIN_TRACKING_RATIO:
             status = ExerciseStatus.UNRELIABLE
@@ -200,6 +205,12 @@ class BaseExercise(ABC):
             max_score=self.max_score,
             hold_time_sec=self._hold_time,
             valid_tracking_ratio=vtr,
-            metrics={"jitter": round(jitter, 4)},
+            metrics={
+                "jitter": round(jitter, 4),
+                "frames": len(self._frames),
+                "poseOkRatio": round(pose_ok_ratio, 3),
+                "requiredHoldSec": self.required_hold_sec,
+                "minHoldSec": self.min_hold_sec,
+            },
             notes=notes,
         )

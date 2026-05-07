@@ -74,7 +74,7 @@ def _point_pts() -> list[tuple[float, float]]:
 
 def test_create_exercises_count():
     exs = create_exercises(_calib())
-    assert len(exs) == 7
+    assert len(exs) == 8
 
 
 def test_create_exercises_ids():
@@ -83,6 +83,7 @@ def test_create_exercises_ids():
     assert "fist" in ids
     assert "pinch" in ids
     assert "zone_movement" in ids
+    assert "hold_still" in ids
 
 
 # ── Тесты OpenPalmExercise ────────────────────────────────────────────────────
