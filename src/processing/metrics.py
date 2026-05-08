@@ -5,6 +5,8 @@ from src.models import TrackingFrame, Point2D, CalibrationProfile
 
 # ── Индексы ключевых точек MediaPipe ──────────────────────────────────────────
 WRIST = 0
+THUMB_CMC = 1
+THUMB_MCP = 2
 THUMB_TIP = 4
 INDEX_MCP = 5;  INDEX_PIP = 6;  INDEX_DIP = 7;  INDEX_TIP = 8
 MIDDLE_MCP = 9; MIDDLE_PIP = 10; MIDDLE_DIP = 11; MIDDLE_TIP = 12
@@ -14,6 +16,7 @@ PINKY_MCP = 17; PINKY_PIP = 18; PINKY_DIP = 19; PINKY_TIP = 20
 LONG_FINGER_TIPS = [INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]
 LONG_FINGER_MCPS = [INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]
 LONG_FINGER_PIPS = [INDEX_PIP, MIDDLE_PIP, RING_PIP, PINKY_PIP]
+LONG_FINGER_DIPS = [INDEX_DIP, MIDDLE_DIP, RING_DIP, PINKY_DIP]
 
 # Опорные точки ладони для расчёта palmWidth (запястье — основание мизинца)
 PALM_BASE_A = WRIST
@@ -58,6 +61,24 @@ def thumb_index_distance(frame: TrackingFrame, palm_width: float) -> float:
     if not frame.is_valid or len(frame.landmarks) < 21:
         return 1.0
     return normalized_distance(frame.landmarks[THUMB_TIP], frame.landmarks[INDEX_TIP], palm_width)
+
+
+def thumb_index_angle_deg(frame: TrackingFrame) -> float:
+    """Angle between thumb and index fingertips around the palm center."""
+    if not frame.is_valid or len(frame.landmarks) < 21:
+        return 180.0
+    center = compute_palm_center(frame)
+    thumb = frame.landmarks[THUMB_TIP]
+    index = frame.landmarks[INDEX_TIP]
+    vt = (thumb.x - center.x, thumb.y - center.y, thumb.z - center.z)
+    vi = (index.x - center.x, index.y - center.y, index.z - center.z)
+    mag = math.sqrt(vt[0] ** 2 + vt[1] ** 2 + vt[2] ** 2) * math.sqrt(
+        vi[0] ** 2 + vi[1] ** 2 + vi[2] ** 2
+    )
+    if mag < 1e-9:
+        return 0.0
+    dot = vt[0] * vi[0] + vt[1] * vi[1] + vt[2] * vi[2]
+    return math.degrees(math.acos(max(-1.0, min(1.0, dot / mag))))
 
 
 def avg_tip_to_palm_distance(frame: TrackingFrame, palm_width: float) -> float:
@@ -142,48 +163,44 @@ def hand_jitter(centers: list[Point2D]) -> float:
 THUMB_MCP_IDX = 2
 THUMB_CMC = 1
 
-def palm_facing_camera(frame: TrackingFrame) -> bool:
-    """
-    Определяет ориентацию кисти: ладонь к камере или тыл.
 
-    Метод: 3D cross-product нормали ладони по Z-компоненте.
-    Используем три точки: WRIST(0), INDEX_MCP(5), PINKY_MCP(17).
-    Нормаль n = (index_mcp - wrist) × (pinky_mcp - wrist).
-    Если n.z > 0 — ладонь смотрит «на» камеру (отрицательное Z MediaPipe = ближе к камере,
-    но знак нормали по XY определяет сторону поверхности).
-
-    MediaPipe задаёт z: запястье = 0, кончики пальцев < 0 (ближе к камере при вытянутой руке).
-    При ладони к камере большой палец БЛИЖЕ (z_thumb < z_pinky для правой руки в зеркале).
-    Используем разность z больших пальцев как подтверждающий признак.
-    """
+def palm_normal_z_ratio(frame: TrackingFrame) -> float:
+    """Signed -1..1 palm normal Z ratio: +1 palm-facing, -1 back-facing, 0 edge-on."""
     if not frame.is_valid or len(frame.landmarks) < 21:
-        return False
+        return 0.0
 
     wrist     = frame.landmarks[WRIST]
     index_mcp = frame.landmarks[INDEX_MCP]
     pinky_mcp = frame.landmarks[PINKY_MCP]
-    thumb_mcp = frame.landmarks[THUMB_MCP_IDX]
 
-    # Векторы от запястья в 3D
     vi = (index_mcp.x - wrist.x, index_mcp.y - wrist.y, index_mcp.z - wrist.z)
     vp = (pinky_mcp.x - wrist.x, pinky_mcp.y - wrist.y, pinky_mcp.z - wrist.z)
 
-    # Cross product → нормаль плоскости ладони
     nx = vi[1]*vp[2] - vi[2]*vp[1]
     ny = vi[2]*vp[0] - vi[0]*vp[2]
     nz = vi[0]*vp[1] - vi[1]*vp[0]
+    mag = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if mag < 1e-9:
+        return 0.0
 
-    # Z-компонент нормали: знак определяет, куда «смотрит» ладонь
-    # Калибруем по метке руки: MediaPipe отдаёт зеркальные координаты
-    # при flip(bgr, 1) перед обработкой.
-    # После горизонтального flip(bgr, 1) MediaPipe видит зеркальный кадр.
-    # Знак nz инвертирован относительно реального мира:
-    # nz < 0 → ладонь к камере для "Right" (реальная правая рука)
-    # nz > 0 → ладонь к камере для "Left"  (реальная левая рука)
     if frame.hand_label == "Right":
-        return nz < 0
-    else:
-        return nz > 0
+        return max(-1.0, min(1.0, -nz / mag))
+    return max(-1.0, min(1.0, nz / mag))
+
+
+def palm_facing_quality(frame: TrackingFrame) -> float:
+    """0..1: 1 when palm faces camera, 0 when edge-on or back-facing."""
+    return max(0.0, palm_normal_z_ratio(frame))
+
+
+def back_facing_quality(frame: TrackingFrame) -> float:
+    """0..1: 1 when back of hand faces camera, 0 when edge-on or palm-facing."""
+    return max(0.0, -palm_normal_z_ratio(frame))
+
+
+def palm_facing_camera(frame: TrackingFrame) -> bool:
+    """True if palm side is closer to facing the camera than the back side."""
+    return palm_facing_quality(frame) > 0.0
 
 
 def finger_spread(frame: TrackingFrame, palm_width: float) -> float:

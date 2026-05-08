@@ -6,7 +6,8 @@ from src.models import (
 )
 from src.exercises.exercises import (
     OpenPalmExercise, FistExercise, PinchExercise,
-    PointGestureExercise, ZoneMovementExercise,
+    PointGestureExercise, PalmFacingExercise, BackFacingExercise,
+    ZoneMovementExercise,
     create_exercises,
 )
 
@@ -24,10 +25,11 @@ def _calib(palm_width: float = 0.15) -> CalibrationProfile:
 
 
 def _frame(landmarks: list[tuple[float, float]],
-           valid: bool = True) -> TrackingFrame:
-    lms = [Point2D(x=x, y=y) for x, y in landmarks]
+           valid: bool = True,
+           hand_label: str = "Right") -> TrackingFrame:
+    lms = [Point2D(x=p[0], y=p[1], z=p[2] if len(p) > 2 else 0.0) for p in landmarks]
     return TrackingFrame(timestamp=time.monotonic(),
-                         landmarks=lms, is_valid=valid)
+                         landmarks=lms, is_valid=valid, hand_label=hand_label)
 
 
 def _open_palm_pts() -> list[tuple[float, float]]:
@@ -49,10 +51,17 @@ def _open_palm_pts() -> list[tuple[float, float]]:
 def _fist_pts() -> list[tuple[float, float]]:
     # Кулак: кончики и PIP согнуты к ладони
     pts = list(_open_palm_pts())
-    pts[6]  = (0.44, 0.70); pts[7]  = (0.44, 0.68); pts[8]  = (0.44, 0.65)
-    pts[10] = (0.51, 0.70); pts[11] = (0.51, 0.68); pts[12] = (0.51, 0.64)
-    pts[14] = (0.59, 0.70); pts[15] = (0.59, 0.68); pts[16] = (0.59, 0.65)
-    pts[18] = (0.65, 0.72); pts[19] = (0.65, 0.70); pts[20] = (0.65, 0.68)
+    pts[4] = (0.56, 0.75)
+    for mcp_idx, pip_idx, dip_idx, tip_idx in [
+        (5, 6, 7, 8),
+        (9, 10, 11, 12),
+        (13, 14, 15, 16),
+        (17, 18, 19, 20),
+    ]:
+        mcp_x, mcp_y = pts[mcp_idx]
+        pts[pip_idx] = (mcp_x, mcp_y + 0.10)
+        pts[dip_idx] = (mcp_x + 0.10, mcp_y + 0.10)
+        pts[tip_idx] = (mcp_x + 0.151, mcp_y + 0.161)
     return pts
 
 
@@ -65,6 +74,10 @@ def _pinch_pts() -> list[tuple[float, float]]:
 
 def _point_pts() -> list[tuple[float, float]]:
     pts = list(_fist_pts())
+    pts[1] = (0.40, 0.60)
+    pts[2] = (0.32, 0.60)
+    pts[3] = (0.28, 0.62)
+    pts[4] = (0.24, 0.64)
     # Указательный полностью разгибаем (MCP, PIP, DIP, TIP в линию вверх)
     pts[6] = (0.42, 0.48); pts[7] = (0.42, 0.38); pts[8] = (0.42, 0.28)
     return pts
@@ -72,6 +85,29 @@ def _point_pts() -> list[tuple[float, float]]:
 
 def _shift_pts(points: list[tuple[float, float]], dx: float) -> list[tuple[float, float]]:
     return [(x + dx, y) for x, y in points]
+
+
+def _orientation_pts(kind: str) -> list[tuple[float, float, float]]:
+    pts = [(0.50, 0.70, 0.0)] * 21
+    pts[0] = (0.50, 0.70, 0.0)
+    if kind == "palm":
+        pts[5] = (0.60, 0.50, 0.0)
+        pts[17] = (0.40, 0.50, 0.0)
+    elif kind == "back":
+        pts[5] = (0.40, 0.50, 0.0)
+        pts[17] = (0.60, 0.50, 0.0)
+    elif kind == "edge":
+        pts[5] = (0.50, 0.50, 0.10)
+        pts[17] = (0.50, 0.50, -0.10)
+    else:
+        raise ValueError(kind)
+    pts[8] = (pts[5][0], 0.25, pts[5][2])
+    pts[9] = (0.50, 0.50, 0.0)
+    pts[12] = (0.50, 0.25, 0.0)
+    pts[13] = (0.52, 0.50, 0.0)
+    pts[16] = (0.52, 0.25, 0.0)
+    pts[20] = (pts[17][0], 0.25, pts[17][2])
+    return pts
 
 
 # ── Тесты create_exercises ────────────────────────────────────────────────────
@@ -152,10 +188,26 @@ class TestFistExercise:
         ex = FistExercise(_calib())
         f  = _frame(_open_palm_pts())
         assert ex._pose_detected(f) is False
+        assert ex._pose_quality(f) == 0.0
+
+    def test_full_fist_quality_is_perfect(self):
+        ex = FistExercise(_calib())
+        f = _frame(_fist_pts())
+        assert ex._pose_quality(f) == 1.0
 
     def test_max_score_is_15(self):
         ex = FistExercise(_calib())
         assert ex.max_score == 15
+
+    def test_partial_fist_has_continuous_quality(self):
+        ex = FistExercise(_calib())
+        pts = _fist_pts()
+        pts[6] = (0.42, 0.48); pts[7] = (0.42, 0.38); pts[8] = (0.42, 0.28)
+        pts[10] = (0.50, 0.46); pts[11] = (0.50, 0.36); pts[12] = (0.50, 0.26)
+        f = _frame(pts)
+
+        assert ex._pose_detected(f) is False
+        assert 0.0 < ex._pose_quality(f) < 1.0
 
 
 # ── Тесты PinchExercise ───────────────────────────────────────────────────────
@@ -165,6 +217,16 @@ class TestPinchExercise:
         ex = PinchExercise(_calib())
         f  = _frame(_pinch_pts())
         assert ex._pose_detected(f) is True
+
+    def test_pinch_with_small_gap_scores_by_angle(self):
+        ex = PinchExercise(_calib())
+        pts = list(_open_palm_pts())
+        pts[4] = (0.45, 0.32)
+        pts[8] = (0.46, 0.30)
+        f = _frame(pts)
+
+        assert ex._pose_detected(f) is True
+        assert ex._pose_quality(f) > 0.95
 
     def test_pose_not_detected_open_palm(self):
         ex = PinchExercise(_calib())
@@ -183,11 +245,48 @@ class TestPointGestureExercise:
         ex = PointGestureExercise(_calib())
         f  = _frame(_point_pts())
         assert ex._pose_detected(f) is True
+        assert ex._pose_quality(f) == 1.0
+
+    def test_slightly_bent_index_is_still_high_quality(self):
+        ex = PointGestureExercise(_calib())
+        pts = _point_pts()
+        pts[8] = (0.42, 0.36)
+        f = _frame(pts)
+        assert ex._pose_quality(f) > 0.9
 
     def test_pose_not_detected_fist(self):
         ex = PointGestureExercise(_calib())
         f  = _frame(_fist_pts())
         assert ex._pose_detected(f) is False
+        assert ex._pose_quality(f) == 0.0
+
+
+class TestPalmFacingExercise:
+    def test_full_palm_facing_quality_is_perfect(self):
+        ex = PalmFacingExercise(_calib())
+        f = _frame(_orientation_pts("palm"), hand_label="Right")
+        assert ex._pose_detected(f) is True
+        assert ex._pose_quality(f) == pytest.approx(1.0)
+
+    def test_edge_on_palm_facing_quality_is_zero(self):
+        ex = PalmFacingExercise(_calib())
+        f = _frame(_orientation_pts("edge"), hand_label="Right")
+        assert ex._pose_detected(f) is False
+        assert ex._pose_quality(f) == pytest.approx(0.0)
+
+
+class TestBackFacingExercise:
+    def test_full_back_facing_quality_is_perfect(self):
+        ex = BackFacingExercise(_calib())
+        f = _frame(_orientation_pts("back"), hand_label="Right")
+        assert ex._pose_detected(f) is True
+        assert ex._pose_quality(f) == pytest.approx(1.0)
+
+    def test_edge_on_back_facing_quality_is_zero(self):
+        ex = BackFacingExercise(_calib())
+        f = _frame(_orientation_pts("edge"), hand_label="Right")
+        assert ex._pose_detected(f) is False
+        assert ex._pose_quality(f) == pytest.approx(0.0)
 
 
 
@@ -222,3 +321,10 @@ class TestZoneMovementExercise:
 def test_exercise_not_timeout_immediately():
     ex = OpenPalmExercise(_calib())
     assert ex.is_timeout() is False
+
+
+def test_exercise_completes_after_observation_window():
+    ex = OpenPalmExercise(_calib())
+    ex._active_start = time.monotonic() - ex.max_duration_sec - 0.1
+    assert ex.is_timeout() is True
+    assert ex.is_complete() is True

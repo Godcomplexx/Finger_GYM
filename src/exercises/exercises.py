@@ -3,16 +3,115 @@ import time
 import math
 from src.models import TrackingFrame, CalibrationProfile
 from src.exercises.base import BaseExercise
+from src.scoring.icf import problem_percent_from_score, qualifier_from_problem_percent
 from src.processing.metrics import (
     avg_tip_to_palm_distance,
-    thumb_index_distance,
+    thumb_index_angle_deg,
     all_finger_curls,
     index_finger_curl,
-    palm_facing_camera,
+    palm_facing_quality,
+    back_facing_quality,
     compute_palm_center,
+    normalized_distance,
+    THUMB_TIP,
+    LONG_FINGER_TIPS,
+    LONG_FINGER_MCPS,
+    LONG_FINGER_PIPS,
+    LONG_FINGER_DIPS,
     finger_spread,
     fingers_pointing_up,
 )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _quality_from_low_distance(distance: float, best: float, worst: float) -> float:
+    if distance <= best:
+        return 1.0
+    if distance >= worst:
+        return 0.0
+    return 1.0 - (distance - best) / (worst - best)
+
+
+def _quality_from_low_value(value: float, best: float, worst: float) -> float:
+    if value <= best:
+        return 1.0
+    if value >= worst:
+        return 0.0
+    return 1.0 - (value - best) / (worst - best)
+
+
+def _angle_deg(a, b, c) -> float:
+    ba = (a.x - b.x, a.y - b.y, a.z - b.z)
+    bc = (c.x - b.x, c.y - b.y, c.z - b.z)
+    mag = math.sqrt(ba[0] ** 2 + ba[1] ** 2 + ba[2] ** 2) * math.sqrt(
+        bc[0] ** 2 + bc[1] ** 2 + bc[2] ** 2
+    )
+    if mag < 1e-9:
+        return 180.0
+    dot = ba[0] * bc[0] + ba[1] * bc[1] + ba[2] * bc[2]
+    return math.degrees(math.acos(max(-1.0, min(1.0, dot / mag))))
+
+
+def _joint_bend_deg(a, b, c) -> float:
+    return max(0.0, 180.0 - _angle_deg(a, b, c))
+
+
+def _quality_to_target_bend(bend_deg: float, min_deg: float, target_deg: float) -> float:
+    if bend_deg <= min_deg:
+        return 0.0
+    return _clamp01((bend_deg - min_deg) / (target_deg - min_deg))
+
+
+def _finger_joint_bend_quality(frame: TrackingFrame, finger_index: int) -> float:
+    mcp = frame.landmarks[LONG_FINGER_MCPS[finger_index]]
+    pip = frame.landmarks[LONG_FINGER_PIPS[finger_index]]
+    dip = frame.landmarks[LONG_FINGER_DIPS[finger_index]]
+    tip = frame.landmarks[LONG_FINGER_TIPS[finger_index]]
+    pip_bend = _joint_bend_deg(mcp, pip, dip)
+    dip_bend = _joint_bend_deg(pip, dip, tip)
+    pip_quality = _quality_to_target_bend(
+        pip_bend, FIST_PIP_MIN_BEND_DEG, FIST_PIP_TARGET_BEND_DEG
+    )
+    dip_quality = _quality_to_target_bend(
+        dip_bend, FIST_DIP_MIN_BEND_DEG, FIST_DIP_TARGET_BEND_DEG
+    )
+    return pip_quality * 0.65 + dip_quality * 0.35
+
+
+def _finger_extension_quality(frame: TrackingFrame, finger_index: int) -> float:
+    mcp = frame.landmarks[LONG_FINGER_MCPS[finger_index]]
+    pip = frame.landmarks[LONG_FINGER_PIPS[finger_index]]
+    dip = frame.landmarks[LONG_FINGER_DIPS[finger_index]]
+    tip = frame.landmarks[LONG_FINGER_TIPS[finger_index]]
+    pip_bend = _joint_bend_deg(mcp, pip, dip)
+    dip_bend = _joint_bend_deg(pip, dip, tip)
+    pip_quality = _quality_from_low_value(
+        pip_bend, POINT_INDEX_STRAIGHT_PIP_BEND_DEG, POINT_INDEX_FIST_PIP_BEND_DEG
+    )
+    dip_quality = _quality_from_low_value(
+        dip_bend, POINT_INDEX_STRAIGHT_DIP_BEND_DEG, POINT_INDEX_FIST_DIP_BEND_DEG
+    )
+    return pip_quality * 0.65 + dip_quality * 0.35
+
+
+PINCH_CLOSED_ANGLE_DEG = 12.0
+PINCH_OPEN_ANGLE_DEG = 90.0
+OPEN_PALM_IDEAL_CURL = 0.20
+OPEN_PALM_MAX_CURL = 0.70
+POINT_INDEX_STRAIGHT_PIP_BEND_DEG = 10.0
+POINT_INDEX_STRAIGHT_DIP_BEND_DEG = 8.0
+POINT_INDEX_FIST_PIP_BEND_DEG = 90.0
+POINT_INDEX_FIST_DIP_BEND_DEG = 50.0
+FIST_PIP_MIN_BEND_DEG = 25.0
+FIST_DIP_MIN_BEND_DEG = 15.0
+FIST_PIP_TARGET_BEND_DEG = 80.0
+FIST_DIP_TARGET_BEND_DEG = 45.0
+FIST_FINGER_DONE_QUALITY = 0.85
+FIST_THUMB_NEAR_FINGER = 0.80
+FIST_THUMB_FAR_FINGER = 1.60
 
 
 # ── 1. Открытая ладонь ────────────────────────────────────────────────────────
@@ -36,7 +135,18 @@ class OpenPalmExercise(BaseExercise):
         curls = all_finger_curls(frame, pw)
         extended = sum(1 for c in curls if c < 0.40)
         spread = finger_spread(frame, pw)
-        return extended >= 3 and tip_dist > 0.55 and spread > 0.25
+        return extended >= 3 and tip_dist > 0.55 and spread > 0.25 and fingers_pointing_up(frame)
+
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        pw = self.calibration.palm_width
+        curls = all_finger_curls(frame, pw)
+        extension_quality = sum(
+            _quality_from_low_value(c, OPEN_PALM_IDEAL_CURL, OPEN_PALM_MAX_CURL)
+            for c in curls
+        ) / 4
+        tip_quality = _clamp01(avg_tip_to_palm_distance(frame, pw) / 0.55)
+        spread_quality = _clamp01(finger_spread(frame, pw) / 0.25)
+        return extension_quality * 0.55 + tip_quality * 0.30 + spread_quality * 0.15
 
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
@@ -63,6 +173,7 @@ class FistExercise(BaseExercise):
     exercise_id = "fist"
     instruction = "Кулак"
     details = [
+        "Выполняйте задание боковой стороной кисти к камере.",
         "Плотно согните 4 длинных пальца к ладони.",
         "Кончики пальцев должны быть близко к центру ладони, не наполовину согнуты.",
         "Удерживайте кулак 5 секунд.",
@@ -72,10 +183,24 @@ class FistExercise(BaseExercise):
     min_hold_sec = 2.5
     max_duration_sec = 5.0
 
+    def _finger_joint_quality(self, frame: TrackingFrame, finger_index: int) -> float:
+        return _finger_joint_bend_quality(frame, finger_index)
+
     def _pose_detected(self, frame: TrackingFrame) -> bool:
+        finger_qualities = [self._finger_joint_quality(frame, i) for i in range(4)]
+        return all(q >= FIST_FINGER_DONE_QUALITY for q in finger_qualities)
+
+    def _pose_quality(self, frame: TrackingFrame) -> float:
         pw = self.calibration.palm_width
-        curls = all_finger_curls(frame, pw)
-        return len(curls) == 4 and all(c > 0.72 for c in curls)
+        finger_quality = sum(self._finger_joint_quality(frame, i) for i in range(4)) / 4
+        thumb_dist = min(
+            normalized_distance(frame.landmarks[THUMB_TIP], frame.landmarks[idx], pw)
+            for idx in LONG_FINGER_TIPS
+        )
+        thumb_quality = _quality_from_low_distance(
+            thumb_dist, FIST_THUMB_NEAR_FINGER, FIST_THUMB_FAR_FINGER
+        )
+        return finger_quality * 0.85 + thumb_quality * 0.15
 
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
@@ -83,7 +208,8 @@ class FistExercise(BaseExercise):
         pw = self.calibration.palm_width
         curls = all_finger_curls(frame, pw)
         straight_names = ["указат.", "средн.", "безым.", "мизинец"]
-        straight = [straight_names[i] for i, c in enumerate(curls) if c <= 0.72]
+        finger_qualities = [self._finger_joint_quality(frame, i) for i in range(4)]
+        straight = [straight_names[i] for i, q in enumerate(finger_qualities) if q < FIST_FINGER_DONE_QUALITY]
         if straight:
             return f"Согните сильнее: {', '.join(straight)}"
         return ""
@@ -95,6 +221,7 @@ class PinchExercise(BaseExercise):
     exercise_id = "pinch"
     instruction = "Щипковый захват"
     details = [
+        "Выполняйте задание боковой стороной кисти к камере.",
         "Сведите большой и указательный пальцы до касания или почти до касания.",
         "Остальные пальцы не должны полностью закрывать ладонь.",
         "Удерживайте щипок 5 секунд.",
@@ -105,20 +232,32 @@ class PinchExercise(BaseExercise):
     max_duration_sec = 5.0
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        pw = self.calibration.palm_width
-        d  = thumb_index_distance(frame, pw)
-        if d >= 0.25:
+        angle = thumb_index_angle_deg(frame)
+        if angle > 35.0:
             return False
+        pw = self.calibration.palm_width
         curls = all_finger_curls(frame, pw)
         other_all_bent = sum(1 for c in curls[1:] if c > 0.65) == 3
         return not other_all_bent
 
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        angle = thumb_index_angle_deg(frame)
+        angle_quality = 1.0 - (
+            max(0.0, angle - PINCH_CLOSED_ANGLE_DEG)
+            / (PINCH_OPEN_ANGLE_DEG - PINCH_CLOSED_ANGLE_DEG)
+        )
+        pinch_quality = _clamp01(angle_quality)
+        pw = self.calibration.palm_width
+        curls = all_finger_curls(frame, pw)
+        other_all_bent = sum(1 for c in curls[1:] if c > 0.65) == 3
+        posture_factor = 0.7 if other_all_bent else 1.0
+        return pinch_quality * posture_factor
+
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
             return ""
-        pw = self.calibration.palm_width
-        d = thumb_index_distance(frame, pw)
-        if d >= 0.25:
+        angle = thumb_index_angle_deg(frame)
+        if angle > 35.0:
             return "Сведите большой и указательный пальцы ближе"
         return ""
 
@@ -129,6 +268,7 @@ class PointGestureExercise(BaseExercise):
     exercise_id = "point_gesture"
     instruction = "Указательный жест"
     details = [
+        "Выполняйте задание боковой стороной кисти к камере.",
         "Выпрямите указательный палец.",
         "Согните минимум два из трех остальных длинных пальцев.",
         "Удерживайте жест 5 секунд.",
@@ -139,20 +279,24 @@ class PointGestureExercise(BaseExercise):
     max_duration_sec = 5.0
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        pw = self.calibration.palm_width
-        curls = all_finger_curls(frame, pw)
-        index_curl = curls[0]
-        others_bent = sum(1 for c in curls[1:] if c > 0.55)
-        return index_curl < 0.40 and others_bent >= 2
+        index_quality = _finger_extension_quality(frame, 0)
+        other_qualities = [_finger_joint_bend_quality(frame, i) for i in range(1, 4)]
+        others_bent = sum(1 for q in other_qualities if q >= 0.65)
+        return index_quality >= 0.75 and others_bent >= 2
+
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        index_quality = _finger_extension_quality(frame, 0)
+        other_quality = sum(_finger_joint_bend_quality(frame, i) for i in range(1, 4)) / 3
+        return index_quality * (0.75 + other_quality * 0.25)
 
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
             return ""
-        pw = self.calibration.palm_width
-        curls = all_finger_curls(frame, pw)
-        if curls[0] >= 0.40:
-            return "Вытяните указательный палец"
-        others_bent = sum(1 for c in curls[1:] if c > 0.55)
+        index_quality = _finger_extension_quality(frame, 0)
+        if index_quality < 0.75:
+            return "Выпрямите указательный палец"
+        other_qualities = [_finger_joint_bend_quality(frame, i) for i in range(1, 4)]
+        others_bent = sum(1 for q in other_qualities if q >= 0.65)
         if others_bent < 2:
             return "Согните остальные пальцы"
         return ""
@@ -174,12 +318,17 @@ class PalmFacingExercise(BaseExercise):
     max_duration_sec = 5.0
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        return palm_facing_camera(frame) and fingers_pointing_up(frame)
+        return palm_facing_quality(frame) >= 0.65 and fingers_pointing_up(frame)
+
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        if not fingers_pointing_up(frame):
+            return 0.0
+        return palm_facing_quality(frame)
 
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
             return ""
-        if not palm_facing_camera(frame):
+        if palm_facing_quality(frame) < 0.65:
             return "Повернитесь ладонью к камере"
         if not fingers_pointing_up(frame):
             return "Поднимите пальцы вверх"
@@ -202,12 +351,17 @@ class BackFacingExercise(BaseExercise):
     max_duration_sec = 5.0
 
     def _pose_detected(self, frame: TrackingFrame) -> bool:
-        return not palm_facing_camera(frame) and fingers_pointing_up(frame)
+        return back_facing_quality(frame) >= 0.65 and fingers_pointing_up(frame)
+
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        if not fingers_pointing_up(frame):
+            return 0.0
+        return back_facing_quality(frame)
 
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         if not frame.is_valid:
             return ""
-        if palm_facing_camera(frame):
+        if back_facing_quality(frame) < 0.65:
             return "Повернитесь тыльной стороной к камере"
         if not fingers_pointing_up(frame):
             return "Поднимите пальцы вверх"
@@ -272,10 +426,10 @@ class ZoneMovementExercise(BaseExercise):
             self._zone_hold_start = None
 
     def is_complete(self) -> bool:
-        return self._zone_index >= len(ZONES)
+        return self._zone_index >= len(ZONES) or self.elapsed() >= self.max_duration_sec
 
     def is_timeout(self) -> bool:
-        return False
+        return self.elapsed() >= self.max_duration_sec
 
     def current_zone(self) -> int:
         return self._zone_index
@@ -306,6 +460,8 @@ class ZoneMovementExercise(BaseExercise):
         total = len(ZONES)
 
         if vtr < 0.65:
+            problem_percent = None
+            icf_qualifier = None
             return ExerciseResult(
                 exercise_id=self.exercise_id,
                 status=ExerciseStatus.UNRELIABLE,
@@ -317,7 +473,11 @@ class ZoneMovementExercise(BaseExercise):
                     "zones_total": total,
                     "jitter": round(jitter, 4),
                     "frames": len(self._frames),
+                    "observationTimeSec": round(self.elapsed(), 2),
+                    "problemPercent": problem_percent,
+                    "icfQualifier": icf_qualifier,
                     "requiredZoneHoldSec": ZONE_HOLD_SEC,
+                    "maxDurationSec": self.max_duration_sec,
                 },
                 notes=["Низкое качество трекинга — результат технически ненадёжен"],
             )
@@ -328,6 +488,12 @@ class ZoneMovementExercise(BaseExercise):
         else:
             status = ExerciseStatus.PARTIAL
             score = int(self.max_score * hit / total)
+        if status == ExerciseStatus.UNRELIABLE:
+            problem_percent = None
+            icf_qualifier = None
+        else:
+            problem_percent = problem_percent_from_score(score, self.max_score)
+            icf_qualifier = qualifier_from_problem_percent(problem_percent)
 
         notes = []
         if hit < total:
@@ -346,7 +512,11 @@ class ZoneMovementExercise(BaseExercise):
                 "zones_total": total,
                 "jitter": round(jitter, 4),
                 "frames": len(self._frames),
+                "observationTimeSec": round(self.elapsed(), 2),
+                "problemPercent": problem_percent,
+                "icfQualifier": icf_qualifier,
                 "requiredZoneHoldSec": ZONE_HOLD_SEC,
+                "maxDurationSec": self.max_duration_sec,
             },
             notes=notes,
         )
@@ -380,27 +550,21 @@ class HoldStillExercise(BaseExercise):
             status = ExerciseStatus.UNRELIABLE
             score = 0
         else:
-            if self._hold_time >= self.required_hold_sec:
-                hold_score = self.max_score
-                status = ExerciseStatus.DONE
-            elif self._hold_time >= self.min_hold_sec:
-                ratio = (self._hold_time - self.min_hold_sec) / max(
-                    0.001, self.required_hold_sec - self.min_hold_sec)
-                hold_score = round(self.max_score * (0.5 + 0.5 * min(1.0, ratio)))
-                status = ExerciseStatus.PARTIAL
-            else:
-                hold_score = 0
-                status = ExerciseStatus.PARTIAL
-
             if jitter <= 0.02:
                 jitter_factor = 1.0
             elif jitter <= 0.05:
                 jitter_factor = 0.7
             else:
                 jitter_factor = 0.4
-            score = round(hold_score * jitter_factor)
-            if score < self.max_score:
-                status = ExerciseStatus.PARTIAL
+            score = round(self.max_score * jitter_factor)
+            status = ExerciseStatus.DONE if score == self.max_score else ExerciseStatus.PARTIAL
+
+        if status == ExerciseStatus.UNRELIABLE:
+            problem_percent = None
+            icf_qualifier = None
+        else:
+            problem_percent = problem_percent_from_score(score, self.max_score)
+            icf_qualifier = qualifier_from_problem_percent(problem_percent)
 
         notes = []
         if vtr < 0.65:
@@ -418,8 +582,12 @@ class HoldStillExercise(BaseExercise):
             metrics={
                 "jitter": round(jitter, 4),
                 "frames": len(self._frames),
+                "observationTimeSec": round(self.elapsed(), 2),
+                "problemPercent": problem_percent,
+                "icfQualifier": icf_qualifier,
                 "requiredHoldSec": self.required_hold_sec,
                 "minHoldSec": self.min_hold_sec,
+                "maxDurationSec": self.max_duration_sec,
             },
             notes=notes,
         )

@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[
         (
-            r'C:\Users\yahoo\AppData\Roaming\Python\Python313\site-packages\mediapipe\tasks\c\libmediapipe.dll',
+            r'.venv\Lib\site-packages\mediapipe\tasks\c\libmediapipe.dll',
             r'mediapipe\tasks\c',
         ),
     ],

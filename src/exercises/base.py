@@ -5,6 +5,7 @@ from src.models import TrackingFrame, CalibrationProfile, ExerciseResult, Exerci
 from src.processing.metrics import (
     valid_tracking_ratio, compute_palm_center, hand_jitter, hand_in_position,
 )
+from src.scoring.icf import problem_percent_from_score, qualifier_from_problem_percent
 
 MIN_TRACKING_RATIO = 0.65
 PREPARE_SEC        = 3.0   # минимальное время показа инструкции
@@ -160,6 +161,10 @@ class BaseExercise(ABC):
     @abstractmethod
     def _pose_detected(self, frame: TrackingFrame) -> bool: ...
 
+    def _pose_quality(self, frame: TrackingFrame) -> float:
+        """0..1 proximity to the requested pose for continuous scoring."""
+        return 1.0 if self._pose_detected(frame) else 0.0
+
     def pose_fail_reason(self, frame: TrackingFrame) -> str:
         """Короткое объяснение почему поза не засчитана (пустая строка = засчитана)."""
         return ""
@@ -167,10 +172,10 @@ class BaseExercise(ABC):
     # ── Статус ────────────────────────────────────────────────────────────────
 
     def is_complete(self) -> bool:
-        return self._hold_time >= self.required_hold_sec
+        return self.elapsed() >= self.max_duration_sec
 
     def is_timeout(self) -> bool:
-        return False
+        return self.elapsed() >= self.max_duration_sec
 
     def elapsed(self) -> float:
         if self._active_start is None:
@@ -204,24 +209,25 @@ class BaseExercise(ABC):
         centers = [compute_palm_center(f) for f in self._frames if f.is_valid]
         jitter  = hand_jitter(centers)
         pose_ok_frames = 0
+        pose_quality_sum = 0.0
         for frame in self._frames:
             in_pos, _ = hand_in_position(frame)
             if frame.is_valid and in_pos and self._pose_detected(frame):
                 pose_ok_frames += 1
+            if frame.is_valid and in_pos:
+                pose_quality_sum += max(0.0, min(1.0, self._pose_quality(frame)))
         pose_ok_ratio = pose_ok_frames / len(self._frames) if self._frames else 0.0
+        pose_quality = pose_quality_sum / len(self._frames) if self._frames else 0.0
 
         if vtr < MIN_TRACKING_RATIO:
             status = ExerciseStatus.UNRELIABLE
             score  = 0
-        elif self._hold_time >= self.required_hold_sec:
+        elif pose_quality >= 0.95:
             status = ExerciseStatus.DONE
             score  = self.max_score
-        elif self._hold_time >= self.min_hold_sec:
+        elif pose_quality > 0.0:
             status = ExerciseStatus.PARTIAL
-            # Пропорционально: от 50% до 100% max_score
-            ratio = (self._hold_time - self.min_hold_sec) / max(
-                0.001, self.required_hold_sec - self.min_hold_sec)
-            score = round(self.max_score * (0.5 + 0.5 * min(1.0, ratio)))
+            score = round(self.max_score * pose_quality)
         else:
             status = ExerciseStatus.PARTIAL
             score  = 0
@@ -231,6 +237,12 @@ class BaseExercise(ABC):
             notes.append("Низкое качество трекинга — результат технически ненадёжен")
         if jitter > 0.02:
             notes.append("Обнаружено дрожание руки")
+        if status == ExerciseStatus.UNRELIABLE:
+            problem_percent = None
+            icf_qualifier = None
+        else:
+            problem_percent = problem_percent_from_score(score, self.max_score)
+            icf_qualifier = qualifier_from_problem_percent(problem_percent)
 
         return ExerciseResult(
             exercise_id=self.exercise_id,
@@ -243,8 +255,13 @@ class BaseExercise(ABC):
                 "jitter": round(jitter, 4),
                 "frames": len(self._frames),
                 "poseOkRatio": round(pose_ok_ratio, 3),
+                "poseQuality": round(pose_quality, 3),
+                "observationTimeSec": round(self.elapsed(), 2),
+                "problemPercent": problem_percent,
+                "icfQualifier": icf_qualifier,
                 "requiredHoldSec": self.required_hold_sec,
                 "minHoldSec": self.min_hold_sec,
+                "maxDurationSec": self.max_duration_sec,
             },
             notes=notes,
         )

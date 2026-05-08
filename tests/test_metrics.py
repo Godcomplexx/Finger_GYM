@@ -7,12 +7,15 @@ from src.processing.metrics import (
     compute_palm_center,
     normalized_distance,
     thumb_index_distance,
+    thumb_index_angle_deg,
     avg_tip_to_palm_distance,
     finger_curl,
     all_finger_curls,
     index_finger_curl,
     hand_jitter,
     palm_facing_camera,
+    palm_facing_quality,
+    back_facing_quality,
     valid_tracking_ratio,
 )
 
@@ -22,7 +25,7 @@ def _make_frame(landmarks: list[tuple[float, float]],
                 valid: bool = True,
                 hand_label: str = "Right") -> TrackingFrame:
     """Создаёт TrackingFrame из списка (x, y) координат."""
-    lms = [Point2D(x=x, y=y) for x, y in landmarks]
+    lms = [Point2D(x=p[0], y=p[1], z=p[2] if len(p) > 2 else 0.0) for p in landmarks]
     return TrackingFrame(timestamp=0.0, landmarks=lms,
                          is_valid=valid, hand_label=hand_label)
 
@@ -129,6 +132,23 @@ class TestThumbIndexDistance:
         pw = compute_palm_width(frame)
         d = thumb_index_distance(frame, pw)
         assert d < 0.25
+
+
+class TestThumbIndexAngle:
+    def test_invalid_frame(self):
+        frame = _make_frame([(0, 0)] * 21, valid=False)
+        assert thumb_index_angle_deg(frame) == 180.0
+
+    def test_pinch_small_angle(self):
+        pts = list(_open_palm_landmarks())
+        pts[4] = (0.43, 0.29)
+        pts[8] = (0.43, 0.29)
+        frame = _make_frame(pts)
+        assert thumb_index_angle_deg(frame) < 1.0
+
+    def test_open_palm_larger_angle(self):
+        frame = _make_frame(_open_palm_landmarks())
+        assert thumb_index_angle_deg(frame) > 35.0
 
 
 # ── Тесты finger_curl ─────────────────────────────────────────────────────────
@@ -256,3 +276,30 @@ class TestPalmFacingCamera:
         pts[17] = (0.60, 0.50)  # PINKY_MCP (правее)
         frame = _make_frame(pts, hand_label="Right")
         assert palm_facing_camera(frame) is False
+
+    def test_palm_facing_quality_full(self):
+        pts = [(0.5, 0.7, 0.0)] * 21
+        pts[0] = (0.50, 0.70, 0.0)
+        pts[5] = (0.60, 0.50, 0.0)
+        pts[17] = (0.40, 0.50, 0.0)
+        frame = _make_frame(pts, hand_label="Right")
+        assert palm_facing_quality(frame) == pytest.approx(1.0)
+        assert back_facing_quality(frame) == 0.0
+
+    def test_back_facing_quality_full(self):
+        pts = [(0.5, 0.7, 0.0)] * 21
+        pts[0] = (0.50, 0.70, 0.0)
+        pts[5] = (0.40, 0.50, 0.0)
+        pts[17] = (0.60, 0.50, 0.0)
+        frame = _make_frame(pts, hand_label="Right")
+        assert back_facing_quality(frame) == pytest.approx(1.0)
+        assert palm_facing_quality(frame) == 0.0
+
+    def test_edge_on_quality_is_zero(self):
+        pts = [(0.5, 0.7, 0.0)] * 21
+        pts[0] = (0.50, 0.70, 0.0)
+        pts[5] = (0.50, 0.50, 0.10)
+        pts[17] = (0.50, 0.50, -0.10)
+        frame = _make_frame(pts, hand_label="Right")
+        assert palm_facing_quality(frame) == pytest.approx(0.0)
+        assert back_facing_quality(frame) == pytest.approx(0.0)

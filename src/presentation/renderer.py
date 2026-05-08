@@ -639,7 +639,9 @@ class Renderer:
         else:
             zone_total = 0
             zone_hit = 0
-            ratio = min(1.0, hold / req) if req > 0 else 0.0
+            duration = getattr(exercise, "max_duration_sec", req)
+            elapsed = exercise.elapsed()
+            ratio = min(1.0, elapsed / duration) if duration > 0 else 0.0
         bar_c = _GREEN if ratio >= 1.0 else _ACCENT
         done  = ratio >= 1.0
 
