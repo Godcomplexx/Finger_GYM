@@ -48,6 +48,19 @@ def _status_label(status: ExerciseStatus) -> str:
     return labels.get(status, status.value)
 
 
+def _icf_qualifier_label(qualifier: int) -> str:
+    labels = {
+        0: "нет проблемы",
+        1: "легкая проблема",
+        2: "умеренная проблема",
+        3: "тяжелая проблема",
+        4: "полная проблема",
+        8: "не определено",
+        9: "не применимо",
+    }
+    return labels.get(qualifier, str(qualifier))
+
+
 def save_pdf_report(session: TestSession, json_path: str) -> str | None:
     if session.summary is None:
         return None
@@ -89,6 +102,19 @@ def save_pdf_report(session: TestSession, json_path: str) -> str | None:
         for item in summary.icf_codes:
             percent = "" if item.problem_percent is None else f", {item.problem_percent}%"
             text = f"{item.formatted_code}  {item.label}{percent}  [{item.source}]"
+            draw.text((x, y), text, font=text_f, fill=(35, 35, 35))
+            y += line
+
+    expert_icf = (session.expert_assessment or {}).get("icf") or {}
+    if expert_icf:
+        y += 24
+        draw.text((x, y), "МКФ-оценка врача", font=h1_f, fill=(20, 20, 20))
+        y += 44
+        for code, value in expert_icf.items():
+            qualifier = value.get("qualifier")
+            formatted = value.get("formattedCode") or f"{code}.{qualifier}"
+            qualifier_text = _icf_qualifier_label(qualifier)
+            text = f"{formatted}  {qualifier_text}"
             draw.text((x, y), text, font=text_f, fill=(35, 35, 35))
             y += line
 

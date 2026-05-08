@@ -743,6 +743,142 @@ class Renderer:
         bw, bh = 240, 64
         return (W // 2 - 16 - bw, H - 150, W // 2 - 16, H - 150 + bh)
 
+    def doctor_indication_rects(self) -> dict[str, tuple[int, int, int, int]]:
+        W, H = self.w, self.h
+        cw = min(900, W - 80)
+        bw = (cw - 42) // 2
+        bh = 70
+        cx = (W - cw) // 2
+        top = H // 2 - 44
+        return {
+            "normal": (cx, top, cx + bw, top + bh),
+            "consult": (cx + bw + 42, top, cx + cw, top + bh),
+            "repeat": (cx, top + bh + 24, cx + bw, top + bh * 2 + 24),
+            "training": (cx + bw + 42, top + bh + 24, cx + cw, top + bh * 2 + 24),
+            "skip": (W // 2 - 130, top + bh * 2 + 58, W // 2 + 130, top + bh * 2 + 118),
+        }
+
+    def draw_doctor_indication(
+        self,
+        frame_bgr: np.ndarray,
+        summary: TestSummary,
+        hover_target: str | None = None,
+        dwell_ratio: float = 0.0,
+        pointer: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "Заключение врача")
+
+        cw, ch = min(980, W - 72), min(520, H - 112)
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.94)
+
+        pil = _bgr_to_pil(img)
+        d = ImageDraw.Draw(pil)
+        _put(d, "Выберите показание для сохранения в протокол", (cx + 28, cy + 26), _F_LG_B, _WHITE)
+        _put(d, f"Итоговый балл: {summary.total_score} / 80", (cx + 28, cy + 72), _F_MD_B, _ACCENT)
+        _put(d, "Можно выбрать мышью, рукой или клавишами 1-4. Esc - пропустить.",
+             (cx + 28, cy + 106), _F_SM, _GRAY)
+        img[:] = _pil_to_bgr(pil)
+
+        labels = {
+            "normal": "1  Без доп. показаний",
+            "consult": "2  Консультация специалиста",
+            "repeat": "3  Повторить тест позже",
+            "training": "4  Тренировка кисти",
+            "skip": "Пропустить",
+        }
+        for key, rect in self.doctor_indication_rects().items():
+            _button(img, rect, labels[key], active=hover_target == key)
+            if hover_target == key and dwell_ratio > 0:
+                x1, _, x2, y2 = rect
+                _progress_bar(img, x1 + 14, y2 + 8, x2 - x1 - 28, 10, dwell_ratio, _GREEN_BGR)
+
+        if pointer is not None:
+            cv2.circle(img, pointer, 16, _ACCENT_BGR, 2, cv2.LINE_AA)
+            cv2.circle(img, pointer, 5, _WHITE_BGR, -1, cv2.LINE_AA)
+        return img
+
+    def icf_qualifier_rects(self) -> dict[str, tuple[int, int, int, int]]:
+        W, H = self.w, self.h
+        cw = min(1040, W - 80)
+        cx = (W - cw) // 2
+        top = H // 2 - 70
+        gap = 20
+        bw = (cw - gap * 3) // 4
+        bh = 72
+        return {
+            "0": (cx, top, cx + bw, top + bh),
+            "1": (cx + (bw + gap), top, cx + (bw + gap) + bw, top + bh),
+            "2": (cx + (bw + gap) * 2, top, cx + (bw + gap) * 2 + bw, top + bh),
+            "3": (cx + (bw + gap) * 3, top, cx + cw, top + bh),
+            "4": (cx, top + bh + 24, cx + bw, top + bh * 2 + 24),
+            "8": (cx + (bw + gap), top + bh + 24, cx + (bw + gap) + bw, top + bh * 2 + 24),
+            "9": (cx + (bw + gap) * 2, top + bh + 24, cx + (bw + gap) * 2 + bw, top + bh * 2 + 24),
+            "skip": (cx + (bw + gap) * 3, top + bh + 24, cx + cw, top + bh * 2 + 24),
+        }
+
+    def draw_icf_assessment(
+        self,
+        frame_bgr: np.ndarray,
+        code: str,
+        label: str,
+        index: int,
+        total: int,
+        selected: dict[str, int],
+        hover_target: str | None = None,
+        dwell_ratio: float = 0.0,
+        pointer: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        img = self._base(frame_bgr)
+        W, H = self.w, self.h
+        self._draw_header(img, "МКФ-оценка врача")
+
+        cw, ch = min(1120, W - 72), min(560, H - 112)
+        cx = (W - cw) // 2
+        cy = (H - ch) // 2
+        _panel(img, cx, cy, cx + cw, cy + ch, alpha=0.94)
+
+        pil = _bgr_to_pil(img)
+        d = ImageDraw.Draw(pil)
+        _put(d, f"Код {index} из {total}: {code}", (cx + 28, cy + 24), _F_LG_B, _ACCENT)
+        _put(d, label, (cx + 28, cy + 66), _F_MD_B, _WHITE)
+        _put(d, "Выберите квалификатор МКФ. Можно мышью, рукой или клавишами 0-4, 8, 9.",
+             (cx + 28, cy + 104), _F_SM, _GRAY)
+        _put(d, "0 нет проблемы   1 легкая   2 умеренная   3 тяжелая   4 полная   8 не определено   9 не применимо",
+             (cx + 28, cy + 132), _F_SM, _GRAY)
+
+        if selected:
+            y = cy + ch - 86
+            parts = [f"{k}.{v}" for k, v in selected.items()]
+            _put(d, "Уже выбрано: " + ", ".join(parts), (cx + 28, y), _F_SM, _GREEN)
+        _put(d, "S - пропустить код   Esc - закончить МКФ-оценку",
+             (cx + 28, cy + ch - 44), _F_SM, _BORDER)
+        img[:] = _pil_to_bgr(pil)
+
+        labels = {
+            "0": "0  Нет",
+            "1": "1  Легкая",
+            "2": "2  Умеренная",
+            "3": "3  Тяжелая",
+            "4": "4  Полная",
+            "8": "8  Не определено",
+            "9": "9  Не применимо",
+            "skip": "Пропустить",
+        }
+        for key, rect in self.icf_qualifier_rects().items():
+            _button(img, rect, labels[key], active=hover_target == key)
+            if hover_target == key and dwell_ratio > 0:
+                x1, _, x2, y2 = rect
+                _progress_bar(img, x1 + 14, y2 + 8, x2 - x1 - 28, 10, dwell_ratio, _GREEN_BGR)
+
+        if pointer is not None:
+            cv2.circle(img, pointer, 16, _ACCENT_BGR, 2, cv2.LINE_AA)
+            cv2.circle(img, pointer, 5, _WHITE_BGR, -1, cv2.LINE_AA)
+        return img
+
     def draw_exercise_result(
         self,
         frame_bgr: np.ndarray,

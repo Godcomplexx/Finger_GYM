@@ -37,3 +37,33 @@ Current exported codes:
 Values marked as `functional_proxy` are comparable with the ICF 0-4 severity
 scale, but they are not a standalone clinical diagnosis and require specialist
 confirmation.
+
+## Dataset collection
+
+For clinical validation, each new session can store:
+
+- MP4 video of the test execution;
+- JSON results from Finger GYM;
+- expert doctor input entered at the end of the session.
+
+The JSON fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `videoPath` | Path to the recorded MP4 file for this session |
+| `expertAssessment.icf` | Doctor-entered ICF qualifiers |
+| `expertAssessment.clinicalScales` | Optional clinical scale values |
+| `expertAssessment.comment` | Optional doctor comment |
+| `expertAssessment.fingerGymSnapshot` | Finger GYM score and generated ICF proxy values at the time of expert input |
+
+The expert prompt can be skipped with:
+
+```bash
+python main.py --no-expert-prompt
+```
+
+Video recording can be disabled with:
+
+```bash
+python main.py --no-video
+```

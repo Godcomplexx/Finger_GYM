@@ -152,4 +152,6 @@ class TestSession:
     tracking_source: str = "unknown"
     calibration: Optional[CalibrationProfile] = None
     summary: Optional[TestSummary] = None
+    video_path: str | None = None
+    expert_assessment: dict = field(default_factory=dict)
     events: list[AuditEvent] = field(default_factory=list)

@@ -4,10 +4,26 @@ import os
 from datetime import datetime, timezone
 from dataclasses import asdict
 from src.models import TestSession, Hand
-from src.app_info import MODULE_NAME
+from src.app_info import MODULE_NAME, runtime_root
 
 
-SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "sessions")
+SESSIONS_DIR = os.path.join(runtime_root(), "sessions")
+
+
+def safe_patient_id(patient_id: str) -> str:
+    return "".join(
+        c if c.isalnum() or c in ("-", "_") else "_"
+        for c in patient_id
+    )[:64] or "unknown"
+
+
+def session_patient_dir(session: TestSession) -> str:
+    return os.path.join(SESSIONS_DIR, safe_patient_id(session.patient_id))
+
+
+def session_file_stem(session: TestSession) -> str:
+    dt = datetime.fromtimestamp(session.started_at, tz=timezone.utc)
+    return f"{session.session_id}_{dt.strftime('%Y%m%d_%H%M%S')}"
 
 
 def _make_serializable(obj):
@@ -25,15 +41,11 @@ def _make_serializable(obj):
 
 def save_session(session: TestSession) -> str:
     """Сохраняет сессию в JSON-файл. Возвращает путь к файлу."""
-    safe_patient = "".join(
-        c if c.isalnum() or c in ("-", "_") else "_"
-        for c in session.patient_id
-    )[:64] or "unknown"
-    patient_dir = os.path.join(SESSIONS_DIR, safe_patient)
+    patient_dir = session_patient_dir(session)
     os.makedirs(patient_dir, exist_ok=True)
 
     dt = datetime.fromtimestamp(session.started_at, tz=timezone.utc)
-    filename = f"{session.session_id}_{dt.strftime('%Y%m%d_%H%M%S')}.json"
+    filename = f"{session_file_stem(session)}.json"
     filepath = os.path.join(patient_dir, filename)
 
     summary = session.summary
@@ -52,6 +64,7 @@ def save_session(session: TestSession) -> str:
         "patientId": session.patient_id,
         "hand": session.hand.value,
         "startedAt": dt.isoformat(),
+        "videoPath": session.video_path,
         "calibration": {
             "palmWidth": round(calib.palm_width, 4) if calib else None,
             "palmCenter": (
@@ -110,6 +123,7 @@ def save_session(session: TestSession) -> str:
             "label": summary.recommendation.label,
             "notes": summary.recommendation.notes,
         } if summary else None,
+        "expertAssessment": session.expert_assessment or None,
         "events": [
             {
                 "timestamp": datetime.fromtimestamp(e.timestamp, tz=timezone.utc).isoformat(),

@@ -11,6 +11,11 @@ import time
 import cv2
 import numpy as np
 
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.app_info import ALGORITHM_VERSION, MODULE_VERSION
@@ -20,8 +25,9 @@ from src.tracking.factory import create_tracker
 from src.processing.calibration import CalibrationCollector
 from src.exercises.exercises import create_exercises, EXERCISE_ORDER
 from src.scoring.engine import build_summary
-from src.storage.session_storage import save_session
+from src.storage.session_storage import save_session, session_file_stem, session_patient_dir
 from src.storage.pdf_report import save_pdf_report
+from src.storage.video_recorder import SessionVideoRecorder
 from src.presentation.renderer import Renderer
 from src.audio import (
     sound_exercise_done, sound_zone_hit, sound_calibration_ok,
@@ -33,6 +39,68 @@ DWELL_SECONDS = 1.1
 RESULT_DWELL_SECONDS = 1.8
 
 _mouse_state = {"pos": (-1, -1), "click": None}
+_video_recorder: SessionVideoRecorder | None = None
+
+
+class RestartSession(Exception):
+    pass
+
+
+def show_completion_form(session_path: str, pdf_path: str | None, video_path: str | None) -> bool:
+    """Return True when the operator wants to start another test."""
+    try:
+        import tkinter as tk
+    except Exception:
+        return False
+
+    start_again = False
+    root = tk.Tk()
+    root.title("Finger Gym - тест завершен")
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+
+    frame = tk.Frame(root, padx=22, pady=18)
+    frame.grid(row=0, column=0, sticky="nsew")
+
+    tk.Label(frame, text="Тест завершен", font=("Segoe UI", 12, "bold")).grid(
+        row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+    )
+    tk.Label(frame, text="Результаты сохранены.").grid(
+        row=1, column=0, columnspan=2, sticky="w", pady=(0, 10)
+    )
+
+    saved_items = [session_path]
+    if pdf_path:
+        saved_items.append(pdf_path)
+    if video_path:
+        saved_items.append(video_path)
+    for index, item in enumerate(saved_items[:3], start=2):
+        tk.Label(frame, text=os.path.basename(item), fg="#444444").grid(
+            row=index, column=0, columnspan=2, sticky="w"
+        )
+
+    buttons = tk.Frame(frame)
+    buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(16, 0))
+
+    def begin_new() -> None:
+        nonlocal start_again
+        start_again = True
+        root.destroy()
+
+    def exit_app() -> None:
+        root.destroy()
+
+    tk.Button(buttons, text="Выход", command=exit_app, width=14).grid(row=0, column=0, padx=(0, 8))
+    tk.Button(buttons, text="Начать новый тест", command=begin_new, width=18).grid(row=0, column=1)
+    root.bind("<Return>", lambda _event: begin_new())
+    root.bind("<Escape>", lambda _event: exit_app())
+
+    root.update_idletasks()
+    x = (root.winfo_screenwidth() - root.winfo_width()) // 2
+    y = (root.winfo_screenheight() - root.winfo_height()) // 3
+    root.geometry(f"+{max(0, x)}+{max(0, y)}")
+    root.mainloop()
+    return start_again
 
 
 def on_mouse(event: int, x: int, y: int, flags: int, param) -> None:
@@ -155,6 +223,8 @@ def parse_args():
     p.add_argument("--height",  type=int, default=720)
     p.add_argument("--tracker", choices=("mediapipe",), default="mediapipe")
     p.add_argument("--debug", action="store_true", help="Показывать панель curl пальцев")
+    p.add_argument("--no-video", action="store_true", help="Не записывать видео датасета")
+    p.add_argument("--no-expert-prompt", action="store_true", help="Не запрашивать экспертную оценку врача в конце")
     return p.parse_args()
 
 
@@ -201,13 +271,152 @@ def read_frame(
     ok, bgr = cap.read()
     if not ok:
         return False, np.zeros((height, width, 3), dtype=np.uint8)
-    return True, cv2.flip(bgr, 1)
+    bgr = cv2.flip(bgr, 1)
+    if _video_recorder is not None:
+        _video_recorder.write(bgr)
+    return True, bgr
 
 
 def cleanup(cap: cv2.VideoCapture | None):
+    stop_video_recording()
     if cap is not None:
         cap.release()
     cv2.destroyAllWindows()
+
+
+def start_video_recording(session: TestSession, width: int, height: int) -> str | None:
+    global _video_recorder
+    path = os.path.join(session_patient_dir(session), f"{session_file_stem(session)}.mp4")
+    try:
+        _video_recorder = SessionVideoRecorder(path, width, height, fps=30.0)
+    except Exception as exc:
+        print(f"[WARN] Video recording disabled: {exc}")
+        log_event(session, "video_recording_failed", "Video recording failed", details={
+            "path": path,
+            "error": str(exc),
+        })
+        return None
+    session.video_path = path
+    log_event(session, "video_recording_started", "Dataset video recording started", details={
+        "path": path,
+        "width": width,
+        "height": height,
+        "fps": 30.0,
+    })
+    return path
+
+
+def stop_video_recording() -> dict | None:
+    global _video_recorder
+    if _video_recorder is None:
+        return None
+    info = _video_recorder.close()
+    _video_recorder = None
+    return info
+
+
+def collect_expert_assessment(
+    cap: cv2.VideoCapture,
+    tracker,
+    renderer: Renderer,
+    summary,
+    width: int,
+    height: int,
+) -> dict:
+    icf_items = [
+        ("b7302", "Сила мышц одной стороны тела"),
+        ("d520", "Уход за частями тела"),
+        ("s110", "Структура головного мозга"),
+        ("e310", "Ближайшие родственники"),
+    ]
+    qualifier_keys = {ord(str(value)): str(value) for value in (0, 1, 2, 3, 4, 8, 9)}
+    selected_icf: dict[str, int] = {}
+
+    for index, (code, label) in enumerate(icf_items, start=1):
+        dwell_target: str | None = None
+        dwell_started = 0.0
+        while True:
+            ok, bgr = read_frame(cap, width, height)
+            if not ok:
+                continue
+            frame = safe_process(tracker, bgr)
+            pointer = hand_pointer(frame, width, height)
+            rects = renderer.icf_qualifier_rects()
+            click_target = hit_target(consume_mouse_click(), rects)
+            pointer_target = hit_target(pointer, rects)
+            mouse_hover = hit_target(_mouse_state["pos"], rects)
+
+            now = time.monotonic()
+            if pointer_target is not None:
+                if pointer_target != dwell_target:
+                    dwell_target = pointer_target
+                    dwell_started = now
+                dwell_ratio = min(1.0, (now - dwell_started) / RESULT_DWELL_SECONDS)
+            else:
+                dwell_target = None
+                dwell_started = 0.0
+                dwell_ratio = 0.0
+
+            img = renderer.draw_icf_assessment(
+                bgr,
+                code,
+                label,
+                index,
+                len(icf_items),
+                selected_icf,
+                hover_target=dwell_target or mouse_hover,
+                dwell_ratio=dwell_ratio,
+                pointer=pointer,
+            )
+            img = renderer.draw_tracking_overlay(img, frame)
+            key = show(img)
+
+            choice = click_target
+            if key in qualifier_keys:
+                choice = qualifier_keys[key]
+            elif key in (ord("s"), ord("S")):
+                choice = "skip"
+            if dwell_target is not None and dwell_ratio >= 1.0:
+                choice = dwell_target
+
+            if should_quit(key):
+                return _build_expert_assessment(summary, selected_icf)
+            if choice == "skip":
+                break
+            if choice in {"0", "1", "2", "3", "4", "8", "9"}:
+                selected_icf[code] = int(choice)
+                break
+
+    return _build_expert_assessment(summary, selected_icf)
+
+
+def _build_expert_assessment(summary, selected_icf: dict[str, int]) -> dict:
+    if not selected_icf:
+        return {}
+    return {
+        "source": "doctor_icf_ui",
+        "enteredAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "icf": {
+            code: {
+                "qualifier": qualifier,
+                "formattedCode": f"{code}.{qualifier}",
+            }
+            for code, qualifier in selected_icf.items()
+        },
+        "comment": "МКФ-оценка врача",
+        "fingerGymSnapshot": {
+            "totalScore": summary.total_score,
+            "icfCodes": [
+                {
+                    "code": item.code,
+                    "formattedCode": item.formatted_code,
+                    "problemPercent": item.problem_percent,
+                    "source": item.source,
+                }
+                for item in summary.icf_codes
+            ],
+        },
+    }
 
 
 def get_screen_size(default_width: int, default_height: int) -> tuple[int, int]:
@@ -261,7 +470,12 @@ def run():
         return
 
     with tracker_context as tracker:
-        cap = open_camera(args.camera, args.width, args.height)
+        try:
+            cap = open_camera(args.camera, args.width, args.height)
+        except RuntimeError as exc:
+            show_startup_error(args, renderer, str(exc))
+            cleanup(cap)
+            return
 
         # ── Шаг 1: выбор руки ─────────────────────────────────────────────────
         selected_hand: Hand | None = None
@@ -365,6 +579,8 @@ def run():
             "modelSha256": tracker.model_sha256,
             "tracker": tracker.source_name,
         })
+        if not args.no_video:
+            start_video_recording(session, args.width, args.height)
 
         # ── Шаг 2: позиционирование руки ─────────────────────────────────────
         from src.processing.metrics import compute_palm_width
@@ -611,12 +827,7 @@ def run():
                 "qualityCategory": summary.quality_category.value,
                 "recommendation": summary.recommendation.mode.value,
             })
-            filepath        = save_session(session)
-            pdf_path        = save_pdf_report(session, filepath)
             sound_session_complete()
-            print(f"[OK] {filepath}")
-            if pdf_path:
-                print(f"[OK] {pdf_path}")
             print(f"     Балл: {summary.total_score}/80  |  {summary.recommendation.label}")
             if summary.icf_codes:
                 icf_text = []
@@ -638,8 +849,40 @@ def run():
                 if key != 255 or window_closed() or remaining <= 0:
                     break
 
+            video_info = stop_video_recording()
+            if video_info is not None:
+                log_event(session, "video_recording_completed", "Dataset video recording completed", details=video_info)
+
+            if not args.no_expert_prompt:
+                try:
+                    session.expert_assessment = collect_expert_assessment(
+                        cap, tracker, renderer, summary, args.width, args.height
+                    )
+                    if session.expert_assessment:
+                        log_event(session, "expert_assessment_added", "Expert assessment added")
+                except EOFError:
+                    print("[WARN] Expert input unavailable; saving session without expert assessment.")
+
+            filepath        = save_session(session)
+            pdf_path        = save_pdf_report(session, filepath)
+            print(f"[OK] {filepath}")
+            if pdf_path:
+                print(f"[OK] {pdf_path}")
+            if session.video_path:
+                print(f"[OK] {session.video_path}")
+            cleanup(cap)
+            start_again = show_completion_form(filepath, pdf_path, session.video_path)
+            if start_again:
+                raise RestartSession
+            return
+
     cleanup(cap)
 
 
 if __name__ == "__main__":
-    run()
+    while True:
+        try:
+            run()
+            break
+        except RestartSession:
+            continue

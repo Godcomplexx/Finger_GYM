@@ -10,11 +10,9 @@ from mediapipe.tasks.python.vision import (
 )
 
 from src.models import TrackingFrame, Point2D
-from src.app_info import tracking_model_sha256
+from src.app_info import tracking_model_path, tracking_model_sha256
 
-# Путь к модели относительно корня проекта
-_HERE = os.path.dirname(__file__)
-MODEL_PATH = os.path.abspath(os.path.join(_HERE, "..", "..", "hand_landmarker.task"))
+MODEL_PATH = tracking_model_path()
 
 # Индексы ключевых точек MediaPipe Hands
 WRIST = 0

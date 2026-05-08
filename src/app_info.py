@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 
 
 MODULE_NAME = "Finger GYM"
@@ -15,8 +16,20 @@ def project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 
+def resource_root() -> str:
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return project_root()
+
+
+def runtime_root() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return project_root()
+
+
 def tracking_model_path() -> str:
-    return os.path.join(project_root(), TRACKING_MODEL_FILE)
+    return os.path.join(resource_root(), TRACKING_MODEL_FILE)
 
 
 def sha256_file(path: str) -> str | None:

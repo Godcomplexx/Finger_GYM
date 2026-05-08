@@ -49,6 +49,11 @@ def _make_session(with_summary: bool = True) -> TestSession:
         hand=Hand.RIGHT,
         calibration=calib,
         summary=summary,
+        video_path="sessions/patient-test/test-save-001.mp4",
+        expert_assessment={
+            "source": "doctor_input",
+            "icf": {"b7302": {"qualifier": 2, "formattedCode": "b7302.2"}},
+        },
     )
 
 
@@ -83,12 +88,14 @@ class TestSaveSession:
         assert d["patientId"] == "patient-test"
         assert d["hand"] == "right"
         assert "startedAt" in d
+        assert "videoPath" in d
         assert "exercises" in d
         assert "totalScore" in d
         assert "qualityCategory" in d
         assert "icfCodes" in d
         assert "events" in d
         assert "recommendation" in d
+        assert "expertAssessment" in d
 
     def test_exercises_serialized(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -154,3 +161,13 @@ class TestSaveSession:
             d = json.load(f)
         assert d["events"][0]["type"] == "test_event"
         assert d["events"][0]["details"]["x"] == 1
+
+    def test_dataset_fields_serialized(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "src.storage.session_storage.SESSIONS_DIR", str(tmp_path)
+        )
+        path = save_session(_make_session())
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        assert d["videoPath"] == "sessions/patient-test/test-save-001.mp4"
+        assert d["expertAssessment"]["icf"]["b7302"]["formattedCode"] == "b7302.2"
