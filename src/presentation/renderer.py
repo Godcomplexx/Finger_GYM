@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from src.app_info import APP_VERSION_LABEL
 from src.models import TrackingFrame, TestSummary
 from src.exercises.base import BaseExercise
 from src.exercises.exercises import ZoneMovementExercise, ZONES, ZONE_RADIUS
@@ -209,6 +210,9 @@ class Renderer:
         pil = _bgr_to_pil(img)
         d   = ImageDraw.Draw(pil)
         _put(d, "Finger Gym", (22, 6),  _F_XL_B, _ACCENT)
+        version_bbox = d.textbbox((0, 0), APP_VERSION_LABEL, font=_F_SM)
+        version_w = version_bbox[2] - version_bbox[0]
+        _put(d, APP_VERSION_LABEL, (self.w - version_w - 22, 18), _F_SM, _GRAY)
         if subtitle:
             _put(d, subtitle, (22, 56), _F_SM, _GRAY)
         img[:] = _pil_to_bgr(pil)

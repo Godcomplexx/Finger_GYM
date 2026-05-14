@@ -7,6 +7,7 @@ import sys
 
 MODULE_NAME = "Finger GYM"
 MODULE_VERSION = "0.2.0"
+APP_VERSION_LABEL = "Версия 1.0.0"
 ALGORITHM_VERSION = "ruleset-2026-05-05"
 MODEL_NAME = "MediaPipe Hand Landmarker"
 TRACKING_MODEL_FILE = "hand_landmarker.task"
